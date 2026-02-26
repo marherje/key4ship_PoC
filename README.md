@@ -29,25 +29,11 @@ cd ..
 export LD_LIBRARY_PATH=$PWD/install/lib64:$PWD/install/lib:$LD_LIBRARY_PATH
 export PYTHONPATH=$PWD/install/lib64:$PWD/install/lib:$PWD/install/python:$PYTHONPATH
 
-# 3.1. Verify plugin symbols are exported
-nm -D install/lib64/libSiPixelDetector_plugin.so | grep " T "
-# Must return non-empty output
-
 # 4. Run ddsim
 cd run_scripts
 ddsim --steeringFile ddsim_steering.py 
 
-# 4.1 Check hits
-root -l output.edm4hep.root -e \
-  'cout << events->GetMaximum("SiPixelHits@.size()") << endl'
-# Must return > 0
-
 # 5. Run algorithm/s
 k4run digitize.py 
-
-# 5.1 Check hits                            
-root -l output.edm4hep.root -e \
-  'cout << events->GetMaximum("SiPixelHitsDigi@.size()") << endl'
-# Must return > 0 
 
 ```
