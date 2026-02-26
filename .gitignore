@@ -1,0 +1,13 @@
+# Logs
+*.log
+
+# Compiled / output files
+*.out
+
+# ROOT files
+*.root
+*.root.*
+
+# Temporary files
+*~
+*.tmp
