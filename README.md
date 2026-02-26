@@ -41,7 +41,7 @@ ddsim --steeringFile ddsim_steering.py
 root -l output.edm4hep.root -e \
   'cout << events->GetMaximum("ECALHits@.size()") << endl'
 # Must return > 0
-```
 
 # 7. Run algorithm/s
 k4run digitize.py 
+```
