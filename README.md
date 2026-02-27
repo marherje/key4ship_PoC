@@ -2,14 +2,14 @@
 
 SND PoC with STarget and SiPixel — DD4hep v01-35 / key4hep 2026-02-01
 
-## Target stack (key4hep latest release)
+## Target stack (key4hep latest release in Feb 2026)
 - DD4hep: v01-35
 - ddsim: integrated in DD4hep v01-35
 - Geant4: 11.x
-- Gaudi: v3x series
+- Gaudi: v4x series
 - ROOT: 6.36+
 - Platform: lxplus.cern.ch, AlmaLinux 9
-- Source: /cvmfs/sw.hsf.org/key4hep/setup.sh
+- Source: /cvmfs/sw.hsf.org/key4hep/setup.sh -r 2026-02-01
 
 ## Build and run
 
