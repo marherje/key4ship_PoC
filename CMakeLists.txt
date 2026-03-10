@@ -16,10 +16,15 @@ gaudi_add_module(SND_reco
   SOURCES
     reco/GeV2MIPConversion.cpp
     reco/BasicDigitizer.cpp
+    reco/ContributionInspector.cpp
+    reco/DelayTagger.cpp
+    reco/EventMerger.cpp
+    reco/EventWindowSplitter.cpp
   LINK
     Gaudi::GaudiKernel
     k4FWCore::k4FWCore
     EDM4HEP::edm4hep
+    podio::podioRootIO
 )
 
 install(TARGETS SiPixelDetector_plugin SiTargetDetector_plugin LIBRARY DESTINATION lib)

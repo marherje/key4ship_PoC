@@ -1,15 +1,22 @@
 from k4FWCore import ApplicationMgr, IOSvc
 from Configurables import GeV2MIPConversion, BasicDigitizer
+from Gaudi.Configuration import MessageSvc, DEBUG, VERBOSE, INFO
+
 # Initializer
 iosvc = IOSvc()
 iosvc.Input = "output.edm4hep.root"
 iosvc.Output = "snd_digi.edm4hep.root"
+
+# To fix verbose level globally for debugging
+# MessageSvc().OutputLevel = DEBUG
 
 # Loading the digitization algorithms
 mip_1 = GeV2MIPConversion("GeV2MIP_SiTarget")
 mip_1.InputCollection  = "SiTargetHits"
 mip_1.OutputCollection = "SiTargetHitsMIP"
 mip_1.MIPValue = 0.00009
+mip_1.DebugFrequency = 500 # Print debug information every 500 events, this variable is algorithm-specific
+mip_1.OutputLevel = DEBUG # Set the output level to DEBUG for this algorithm exclusively
 
 mip_2 = GeV2MIPConversion("GeV2MIP_SiPixel")
 mip_2.InputCollection  = "SiPixelHits"

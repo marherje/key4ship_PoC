@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lccdd>
+
+  <detectors>
+    <detector id="2" name="SiTarget" type="SiTargetDetector"
+              readout="SiTargetHits">
+
+      <!-- Global envelope parameters -->
+      <parameters
+        env_width="400*mm"
+        env_height="400*mm"
+        z_position="-300*mm"
+      />
+
+      <layer repeat="SiTarget_NLayers">
+        <!-- Tungsten absorber -->
+        <slice material="TungstenDens1910" thickness="SiTarget_WThickness"
+               sensitive="false" vis="TungstenVis"/>
+        <!-- Air gap between absorber and first Si plane (module offset) -->
+        <slice material="Air" thickness="SiTarget_module_offset"
+               sensitive="false"/>
+        <!-- X plane: measures X coordinate, no rotation -->
+        <slice material="Silicon" thickness="SiTarget_sensor_thickness"
+               sensitive="true" plane="0" vis="SiVis"/>
+        <!-- Air gap between the two Si planes -->
+        <slice material="Air" thickness="SiTarget_XY_plane_gap"
+               sensitive="false"/>
+        <!-- Y plane: measures Y coordinate, rotated 90 degrees around Z by the plugin -->
+        <slice material="Silicon" thickness="SiTarget_sensor_thickness"
+               sensitive="true" plane="1" vis="SiVis"/>
+        <!-- Air gap after second Si plane to next absorber -->
+        <slice material="Air" thickness="SiTarget_layer_gap"
+               sensitive="false"/>
+      </layer>
+
+    </detector>
+  </detectors>
+
+</lccdd>

@@ -15,7 +15,7 @@ print("COMPACT FILE =", SIM.compactFile)
 SIM.enableGun       = True
 SIM.gun.particle    = "mu-"
 SIM.gun.energy      = 50 * GeV
-SIM.gun.position    = (0, 0, -500 * mm)
+SIM.gun.position    = (0, 0, -1000 * mm)
 SIM.gun.direction   = (0, 0, 1)
 
 SIM.physicsList     = "QGSP_BERT"
