@@ -6,25 +6,49 @@ ContributionInspector::ContributionInspector(const std::string& name, ISvcLocato
     : Gaudi::Algorithm(name, svcLoc) {}
 
 StatusCode ContributionInspector::initialize() {
-  StatusCode sc = Gaudi::Algorithm::initialize();
-  if (sc.isFailure()) return sc;
-  m_targetHandle = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
-      m_targetName.value(), Gaudi::DataHandle::Reader, this);
-  m_pixelHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
-      m_pixelName.value(),  Gaudi::DataHandle::Reader, this);
-  return sc;
+  try {
+    StatusCode sc = Gaudi::Algorithm::initialize();
+    if (sc.isFailure()) return sc;
+    m_targetHandle = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
+        m_targetName.value(), Gaudi::DataHandle::Reader, this);
+    m_pixelHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
+        m_pixelName.value(),  Gaudi::DataHandle::Reader, this);
+    return sc;
+  } catch (const std::exception& e) {
+    error() << "[ContributionInspector] Exception in initialize(): " << e.what() << endmsg;
+    return StatusCode::FAILURE;
+  } catch (...) {
+    error() << "[ContributionInspector] Unknown exception in initialize()." << endmsg;
+    return StatusCode::FAILURE;
+  }
 }
 
 StatusCode ContributionInspector::execute(const EventContext&) const {
-  inspectCollection(*m_targetHandle->get(), m_targetName.value());
-  inspectCollection(*m_pixelHandle->get(),  m_pixelName.value());
-  return StatusCode::SUCCESS;
+  try {
+    inspectCollection(*m_targetHandle->get(), m_targetName.value());
+    inspectCollection(*m_pixelHandle->get(),  m_pixelName.value());
+    return StatusCode::SUCCESS;
+  } catch (const std::exception& e) {
+    error() << "[ContributionInspector] Exception in execute(): " << e.what() << endmsg;
+    return StatusCode::FAILURE;
+  } catch (...) {
+    error() << "[ContributionInspector] Unknown exception in execute()." << endmsg;
+    return StatusCode::FAILURE;
+  }
 }
 
 StatusCode ContributionInspector::finalize() {
-  m_targetHandle.reset();
-  m_pixelHandle.reset();
-  return Gaudi::Algorithm::finalize();
+  try {
+    m_targetHandle.reset();
+    m_pixelHandle.reset();
+    return Gaudi::Algorithm::finalize();
+  } catch (const std::exception& e) {
+    error() << "[ContributionInspector] Exception in finalize(): " << e.what() << endmsg;
+    return StatusCode::FAILURE;
+  } catch (...) {
+    error() << "[ContributionInspector] Unknown exception in finalize()." << endmsg;
+    return StatusCode::FAILURE;
+  }
 }
 
 void ContributionInspector::inspectCollection(

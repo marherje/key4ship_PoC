@@ -12,53 +12,78 @@ public:
       : Gaudi::Algorithm(name, svcLoc) {}
 
   StatusCode initialize() override {
-    StatusCode sc = Gaudi::Algorithm::initialize();
-    if (sc.isFailure()) return sc;
-    // DataHandles are built here, AFTER Gaudi has applied all Python-set
-    // property values, so m_inputName / m_outputName hold the user values.
-    m_inputHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
-        m_inputName.value(),  Gaudi::DataHandle::Reader, this);
-    m_outputHandle = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
-        m_outputName.value(), Gaudi::DataHandle::Writer, this);
-    m_invMIP = 1.0 / m_MIPValue;
-    return sc;
+    try {
+      StatusCode sc = Gaudi::Algorithm::initialize();
+      if (sc.isFailure()) return sc;
+      // DataHandles are built here, AFTER Gaudi has applied all Python-set
+      // property values, so m_inputName / m_outputName hold the user values.
+      m_inputHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
+          m_inputName.value(),  Gaudi::DataHandle::Reader, this);
+      m_outputHandle = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
+          m_outputName.value(), Gaudi::DataHandle::Writer, this);
+      m_invMIP = 1.0 / m_MIPValue;
+      return sc;
+    } catch (const std::exception& e) {
+      error() << "[GeV2MIPConversion] Exception in initialize(): " << e.what() << endmsg;
+      return StatusCode::FAILURE;
+    } catch (...) {
+      error() << "[GeV2MIPConversion] Unknown exception in initialize()." << endmsg;
+      return StatusCode::FAILURE;
+    }
   }
 
   StatusCode execute(const EventContext&) const override {
-    const auto* input  = m_inputHandle->get();
-    auto*       output = m_outputHandle->createAndPut();
+    try {
+      const auto* input  = m_inputHandle->get();
+      auto*       output = m_outputHandle->createAndPut();
 
-    const long long evtNum = m_eventCount.fetch_add(1);
-    const bool doPrint = (evtNum % m_debugFreq == 0);
+      const long long evtNum = m_eventCount.fetch_add(1);
+      const bool doPrint = (evtNum % m_debugFreq == 0);
 
-    for (const auto& hit : *input) {
-      auto nh = output->create();
-      nh.setCellID(hit.getCellID());
-      const auto& pos = hit.getPosition();
-      const float mipEnergy = static_cast<float>(hit.getEnergy() * m_invMIP);
-      nh.setEnergy(mipEnergy);
-      nh.setPosition(pos);
+      for (const auto& hit : *input) {
+        auto nh = output->create();
+        nh.setCellID(hit.getCellID());
+        const auto& pos = hit.getPosition();
+        const float mipEnergy = static_cast<float>(hit.getEnergy() * m_invMIP);
+        nh.setEnergy(mipEnergy);
+        nh.setPosition(pos);
+
+        if (doPrint) {
+          debug() << "  Hit: energy=" << hit.getEnergy() << " GeV"
+                  << "  pos=(" << pos.x << ", " << pos.y << ", " << pos.z << ") mm"
+                  << "  => " << mipEnergy << " MIP"
+                  << endmsg;
+        }
+      }
 
       if (doPrint) {
-        debug() << "  Hit: energy=" << hit.getEnergy() << " GeV"
-                << "  pos=(" << pos.x << ", " << pos.y << ", " << pos.z << ") mm"
-                << "  => " << mipEnergy << " MIP"
-                << endmsg;
+        info() << "GeV2MIPConversion [evt " << evtNum << "]: "
+               << input->size() << " hits processed (MIPValue=" << m_MIPValue << " GeV)"
+               << endmsg;
       }
-    }
 
-    
-    info() << "GeV2MIPConversion [evt " << evtNum << "]: "
-             << input->size() << " hits processed (MIPValue=" << m_MIPValue << " GeV)"
-             << endmsg;
-    
-    return StatusCode::SUCCESS;
+      return StatusCode::SUCCESS;
+    } catch (const std::exception& e) {
+      error() << "[GeV2MIPConversion] Exception in execute(): " << e.what() << endmsg;
+      return StatusCode::FAILURE;
+    } catch (...) {
+      error() << "[GeV2MIPConversion] Unknown exception in execute()." << endmsg;
+      return StatusCode::FAILURE;
+    }
   }
 
   StatusCode finalize() override {
-    m_inputHandle.reset();
-    m_outputHandle.reset();
-    return Gaudi::Algorithm::finalize();
+    try {
+      m_inputHandle.reset();
+      m_outputHandle.reset();
+      return Gaudi::Algorithm::finalize();
+    } catch (const std::exception& e) {
+      error() << "[GeV2MIPConversion] Exception in finalize(): " << e.what() << endmsg;
+      return StatusCode::FAILURE;
+    } catch (...) {
+      error() << "[GeV2MIPConversion] Unknown exception in finalize()." << endmsg;
+      return StatusCode::FAILURE;
+    }
   }
 
 private:
