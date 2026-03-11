@@ -1,5 +1,5 @@
 //====================================================================
-//  DD4hep detector plugin for SiPixelDetector
+//  DD4hep detector plugin for SiPadDetector
 //  Based on CaloPrototype_v02 pattern, updated for DD4hep v01-35
 //====================================================================
 #include "DD4hep/DetFactoryHelper.h"
@@ -9,7 +9,7 @@
 using namespace dd4hep;
 using namespace dd4hep::detail;
 
-dd4hep::Ref_t create_SiPixelDetector(dd4hep::Detector& description,
+dd4hep::Ref_t create_SiPadDetector(dd4hep::Detector& description,
                              xml_h element,
                              dd4hep::SensitiveDetector sens) {
 
@@ -103,4 +103,4 @@ dd4hep::Ref_t create_SiPixelDetector(dd4hep::Detector& description,
   return sdet;
 }
 
-DECLARE_DETELEMENT(SiPixelDetector, create_SiPixelDetector)
+DECLARE_DETELEMENT(SiPadDetector, create_SiPadDetector)

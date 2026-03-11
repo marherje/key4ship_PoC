@@ -11,37 +11,61 @@ public:
       : Gaudi::Algorithm(name, svcLoc) {}
 
   StatusCode initialize() override {
-    m_inputHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
-        m_inputName.value(),  Gaudi::DataHandle::Reader, this);
-    m_outputHandle = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
-        m_outputName.value(), Gaudi::DataHandle::Writer, this);
-    return Gaudi::Algorithm::initialize();
+    try {
+      m_inputHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
+          m_inputName.value(),  Gaudi::DataHandle::Reader, this);
+      m_outputHandle = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
+          m_outputName.value(), Gaudi::DataHandle::Writer, this);
+      return Gaudi::Algorithm::initialize();
+    } catch (const std::exception& e) {
+      error() << "[BasicDigitizer] Exception in initialize(): " << e.what() << endmsg;
+      return StatusCode::FAILURE;
+    } catch (...) {
+      error() << "[BasicDigitizer] Unknown exception in initialize()." << endmsg;
+      return StatusCode::FAILURE;
+    }
   }
 
   StatusCode execute(const EventContext&) const override {
-    const auto* input  = m_inputHandle->get();
-    auto*       output = m_outputHandle->createAndPut();
+    try {
+      const auto* input  = m_inputHandle->get();
+      auto*       output = m_outputHandle->createAndPut();
 
-    int n_pass = 0;
-    for (const auto& hit : *input) {
-      if (hit.getEnergy() > m_threshold) {
-        auto nh = output->create();
-        nh.setCellID(hit.getCellID());
-        nh.setEnergy(hit.getEnergy());
-        nh.setPosition(hit.getPosition());
-        ++n_pass;
+      int n_pass = 0;
+      for (const auto& hit : *input) {
+        if (hit.getEnergy() > m_threshold) {
+          auto nh = output->create();
+          nh.setCellID(hit.getCellID());
+          nh.setEnergy(hit.getEnergy());
+          nh.setPosition(hit.getPosition());
+          ++n_pass;
+        }
       }
-    }
 
-    info() << "BasicDigitizer: " << input->size() << " in, "
-           << n_pass << " passing threshold" << endmsg;
-    return StatusCode::SUCCESS;
+      info() << "BasicDigitizer: " << input->size() << " in, "
+             << n_pass << " passing threshold" << endmsg;
+      return StatusCode::SUCCESS;
+    } catch (const std::exception& e) {
+      error() << "[BasicDigitizer] Exception in execute(): " << e.what() << endmsg;
+      return StatusCode::FAILURE;
+    } catch (...) {
+      error() << "[BasicDigitizer] Unknown exception in execute()." << endmsg;
+      return StatusCode::FAILURE;
+    }
   }
 
   StatusCode finalize() override {
-    m_inputHandle.reset();
-    m_outputHandle.reset();
-    return Gaudi::Algorithm::finalize();
+    try {
+      m_inputHandle.reset();
+      m_outputHandle.reset();
+      return Gaudi::Algorithm::finalize();
+    } catch (const std::exception& e) {
+      error() << "[BasicDigitizer] Exception in finalize(): " << e.what() << endmsg;
+      return StatusCode::FAILURE;
+    } catch (...) {
+      error() << "[BasicDigitizer] Unknown exception in finalize()." << endmsg;
+      return StatusCode::FAILURE;
+    }
   }
 
 private:

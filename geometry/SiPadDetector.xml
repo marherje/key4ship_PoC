@@ -1,5 +1,5 @@
-<detector name="SiPixel" type="SiPixelDetector" vis="EcalVis" id="1"
-          readout="SiPixelHits" insideTrackingVolume="false">
+<detector name="SiPad" type="SiPadDetector" vis="EcalVis" id="1"
+          readout="SiPadHits" insideTrackingVolume="false">
 
   <dimensions x="Ecal_dim_x" y="Ecal_dim_y" z="Ecal_dim_z"/>
 
