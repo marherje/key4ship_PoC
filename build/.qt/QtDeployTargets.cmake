@@ -1,0 +1,6 @@
+set(__QT_DEPLOY_TARGET_SiPadDetector_plugin_FILE /afs/cern.ch/user/m/marquezh/public/key4ship/key4ship_PoC/build/libSiPadDetector_plugin.so)
+set(__QT_DEPLOY_TARGET_SiPadDetector_plugin_TYPE SHARED_LIBRARY)
+set(__QT_DEPLOY_TARGET_SiTargetDetector_plugin_FILE /afs/cern.ch/user/m/marquezh/public/key4ship/key4ship_PoC/build/libSiTargetDetector_plugin.so)
+set(__QT_DEPLOY_TARGET_SiTargetDetector_plugin_TYPE SHARED_LIBRARY)
+set(__QT_DEPLOY_TARGET_SND_reco_FILE /afs/cern.ch/user/m/marquezh/public/key4ship/key4ship_PoC/build/libSND_reco.so)
+set(__QT_DEPLOY_TARGET_SND_reco_TYPE MODULE_LIBRARY)

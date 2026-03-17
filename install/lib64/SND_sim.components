@@ -1,0 +1,8 @@
+v2::libSND_reco.so:BasicDigitizer
+v2::libSND_reco.so:ContributionInspector
+v2::libSND_reco.so:DelayTagger
+v2::libSND_reco.so:EDM4HEP2RNTuple
+v2::libSND_reco.so:EventMerger
+v2::libSND_reco.so:EventShuffler
+v2::libSND_reco.so:EventWindowSplitter
+v2::libSND_reco.so:GeV2MIPConversion
