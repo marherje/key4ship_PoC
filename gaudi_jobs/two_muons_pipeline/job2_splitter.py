@@ -2,12 +2,12 @@ from k4FWCore import ApplicationMgr
 from Configurables import EventWindowSplitter
 
 splitter = EventWindowSplitter("EventWindowSplitter")
-splitter.InputFile                = "shuffled.root"
+splitter.InputFile                = "shuffled.edm4hep.root"
 splitter.InputCollectionSiTarget  = "SiTargetHitsMerged"
-splitter.InputCollectionSiPixel   = "SiPixelHitsMerged"
-splitter.OutputFile               = "timewindows.root"
+splitter.InputCollectionSiPad   = "SiPadHitsMerged"
+splitter.OutputFile               = "timewindows.edm4hep.root"
 splitter.OutputCollectionSiTarget = "SiTargetHitsWindowed"
-splitter.OutputCollectionSiPixel  = "SiPixelHitsWindowed"
+splitter.OutputCollectionSiPad  = "SiPadHitsWindowed"
 splitter.WindowSize = 25.0   # ns
 
 ApplicationMgr(

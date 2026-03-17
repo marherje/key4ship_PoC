@@ -67,28 +67,28 @@ public:
       // Validate collections and source ID parameters before processing
       bool ok = true;
       ok &= validateCollection(frame, m_inTargetName.value(), "EventWindowSplitter", msgStream());
-      ok &= validateCollection(frame, m_inPixelName.value(),  "EventWindowSplitter", msgStream());
+      ok &= validateCollection(frame, m_inPadName.value(),  "EventWindowSplitter", msgStream());
       if (!ok) return StatusCode::FAILURE;
 
       const auto& inTarget = frame.get<edm4hep::SimCalorimeterHitCollection>(m_inTargetName.value());
-      const auto& inPixel  = frame.get<edm4hep::SimCalorimeterHitCollection>(m_inPixelName.value());
+      const auto& inPad  = frame.get<edm4hep::SimCalorimeterHitCollection>(m_inPadName.value());
 
       validateParameter(frame, "SiTargetSourceIDs", inTarget.size(),
                         "EventWindowSplitter", msgStream());
-      validateParameter(frame, "SiPixelSourceIDs",  inPixel.size(),
+      validateParameter(frame, "SiPadSourceIDs",  inPad.size(),
                         "EventWindowSplitter", msgStream());
 
       // Read source_id parameters written by EventShuffler
       std::vector<int> sourceIDsSiTarget =
           frame.getParameter<std::vector<int>>("SiTargetSourceIDs")
                .value_or(std::vector<int>{});
-      std::vector<int> sourceIDsSiPixel =
-          frame.getParameter<std::vector<int>>("SiPixelSourceIDs")
+      std::vector<int> sourceIDsSiPad =
+          frame.getParameter<std::vector<int>>("SiPadSourceIDs")
                .value_or(std::vector<int>{});
 
       // Build cellID -> source_id maps for fast lookup during window construction
       std::unordered_map<uint64_t, int> siTargetSourceMap;
-      std::unordered_map<uint64_t, int> siPixelSourceMap;
+      std::unordered_map<uint64_t, int> siPadSourceMap;
       {
         size_t idx = 0;
         for (const auto& hit : inTarget) {
@@ -99,9 +99,9 @@ public:
       }
       {
         size_t idx = 0;
-        for (const auto& hit : inPixel) {
-          siPixelSourceMap[hit.getCellID()] =
-              (idx < sourceIDsSiPixel.size()) ? sourceIDsSiPixel[idx] : 0;
+        for (const auto& hit : inPad) {
+          siPadSourceMap[hit.getCellID()] =
+              (idx < sourceIDsSiPad.size()) ? sourceIDsSiPad[idx] : 0;
           ++idx;
         }
       }
@@ -129,9 +129,9 @@ public:
       };
 
       const auto siTargetList = buildList(inTarget);
-      const auto siPixelList  = buildList(inPixel);
+      const auto siPadList  = buildList(inPad);
 
-      if (siTargetList.empty() && siPixelList.empty()) {
+      if (siTargetList.empty() && siPadList.empty()) {
         info() << "[EventWindowSplitter] No contributions found; nothing to write." << endmsg;
         return StatusCode::SUCCESS;
       }
@@ -139,14 +139,14 @@ public:
       // --- 2. Determine global t_start ---
       float t_start = std::numeric_limits<float>::max();
       if (!siTargetList.empty()) t_start = std::min(t_start, siTargetList.front().data.time);
-      if (!siPixelList.empty())  t_start = std::min(t_start, siPixelList.front().data.time);
+      if (!siPadList.empty())  t_start = std::min(t_start, siPadList.front().data.time);
 
       const float t_end_global = [](const auto& a, const auto& b) -> float {
         float t = std::numeric_limits<float>::lowest();
         if (!a.empty()) t = std::max(t, a.back().data.time);
         if (!b.empty()) t = std::max(t, b.back().data.time);
         return t;
-      }(siTargetList, siPixelList);
+      }(siTargetList, siPadList);
 
       // --- 3. Assign each contribution to a window index ---
       // Window k covers [t_start + k*W, t_start + (k+1)*W).
@@ -164,11 +164,11 @@ public:
       };
 
       const auto windowsSiTarget = distribute(siTargetList);
-      const auto windowsSiPixel  = distribute(siPixelList);
+      const auto windowsSiPad  = distribute(siPadList);
 
       int numWindows = 0;
       if (!windowsSiTarget.empty()) numWindows = std::max(numWindows, windowsSiTarget.rbegin()->first + 1);
-      if (!windowsSiPixel.empty())  numWindows = std::max(numWindows, windowsSiPixel.rbegin()->first  + 1);
+      if (!windowsSiPad.empty())  numWindows = std::max(numWindows, windowsSiPad.rbegin()->first  + 1);
 
       // --- 4. Write one frame per window ---
       podio::ROOTWriter writer(m_outputFile.value());
@@ -177,6 +177,7 @@ public:
       // Returns hits collection, contributions collection, and parallel source_id vector.
       auto buildWindowColl =
           [&](int wIdx,
+              float t_window_start,
               const std::map<int, std::map<uint64_t, std::vector<ContribData>>>& windows,
               const std::unordered_map<uint64_t, int>& sourceMap)
           -> std::tuple<edm4hep::SimCalorimeterHitCollection,
@@ -201,7 +202,7 @@ public:
           for (const auto& cd : contribVec) {
             auto contrib = contribs.create();
             contrib.setEnergy(cd.energy);
-            contrib.setTime(cd.time);
+            contrib.setTime(cd.time - t_window_start);
             contrib.setPDG(cd.source_id);
             contrib.setStepPosition({cd.stepX, cd.stepY, cd.stepZ});
             hit.addToContributions(contrib);
@@ -214,20 +215,23 @@ public:
       };
 
       for (int wIdx = 0; wIdx < numWindows; ++wIdx) {
+        const float t_window_start =
+            t_start + static_cast<float>(wIdx) * static_cast<float>(m_windowSize);
         podio::Frame windowFrame;
 
         auto [siTargetColl, siTargetContribs, windowSourceIDsSiTarget] =
-            buildWindowColl(wIdx, windowsSiTarget, siTargetSourceMap);
-        auto [siPixelColl, siPixelContribs, windowSourceIDsSiPixel] =
-            buildWindowColl(wIdx, windowsSiPixel, siPixelSourceMap);
+            buildWindowColl(wIdx, t_window_start, windowsSiTarget, siTargetSourceMap);
+        auto [siPadColl, siPadContribs, windowSourceIDsSiPad] =
+            buildWindowColl(wIdx, t_window_start, windowsSiPad, siPadSourceMap);
 
         windowFrame.put(std::move(siTargetColl),    m_outTargetName.value());
         windowFrame.put(std::move(siTargetContribs), m_outTargetName.value() + "_Contributions");
-        windowFrame.put(std::move(siPixelColl),     m_outPixelName.value());
-        windowFrame.put(std::move(siPixelContribs),  m_outPixelName.value()  + "_Contributions");
+        windowFrame.put(std::move(siPadColl),     m_outPadName.value());
+        windowFrame.put(std::move(siPadContribs),  m_outPadName.value()  + "_Contributions");
 
         windowFrame.putParameter("SiTargetSourceIDs", windowSourceIDsSiTarget);
-        windowFrame.putParameter("SiPixelSourceIDs",  windowSourceIDsSiPixel);
+        windowFrame.putParameter("SiPadSourceIDs",  windowSourceIDsSiPad);
+        windowFrame.putParameter("t_window_start",    t_window_start);
 
         writer.writeFrame(windowFrame, "events");
       }
@@ -235,7 +239,7 @@ public:
 
       // --- 5. Summary ---
       const long long totalInputContribs = static_cast<long long>(siTargetList.size())
-                                         + static_cast<long long>(siPixelList.size());
+                                         + static_cast<long long>(siPadList.size());
       const double avgPerWindow = (numWindows > 0)
           ? static_cast<double>(totalInputContribs) / numWindows
           : 0.0;
@@ -271,14 +275,14 @@ private:
       this, "InputFile", "shuffled.root", "Input super-event file"};
   Gaudi::Property<std::string> m_inTargetName{
       this, "InputCollectionSiTarget", "SiTargetHitsMerged", "Input SiTarget collection"};
-  Gaudi::Property<std::string> m_inPixelName{
-      this, "InputCollectionSiPixel", "SiPixelHitsMerged", "Input SiPixel collection"};
+  Gaudi::Property<std::string> m_inPadName{
+      this, "InputCollectionSiPad", "SiPadHitsMerged", "Input SiPad collection"};
   Gaudi::Property<std::string> m_outputFile{
       this, "OutputFile", "timewindows.edm4hep.root", "Output ROOT file for time-windowed events"};
   Gaudi::Property<std::string> m_outTargetName{
       this, "OutputCollectionSiTarget", "SiTargetHitsWindowed", "Output SiTarget collection name"};
-  Gaudi::Property<std::string> m_outPixelName{
-      this, "OutputCollectionSiPixel", "SiPixelHitsWindowed", "Output SiPixel collection name"};
+  Gaudi::Property<std::string> m_outPadName{
+      this, "OutputCollectionSiPad", "SiPadHitsWindowed", "Output SiPad collection name"};
   Gaudi::Property<double> m_windowSize{
       this, "WindowSize", 25.0, "Time window size (ns)"};
 };

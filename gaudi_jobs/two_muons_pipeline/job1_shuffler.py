@@ -7,8 +7,8 @@ from Configurables import EventShuffler
 
 shuffler = EventShuffler("EventShuffler")
 shuffler.InputFiles = [
-    "output.edm4hep.root",
-    "output2.edm4hep.root"
+    "../../simulation/run_script/data/output_mu-_xyz_0.1_0.1_-1000_E50.edm4hep.root",
+    "../../simulation/run_script/data/output_mu-_xyz_0.1_15.0_-1000_E50.edm4hep.root"
 ]
 shuffler.SourceIDs = [1, 2]
 shuffler.Delays    = [25.0001, 15.0]   # ns, adjust per source
@@ -16,13 +16,13 @@ shuffler.CollectionsSiTarget = [
     "SiTargetHits",
     "SiTargetHits"
 ]
-shuffler.CollectionsSiPixel = [
-    "SiPixelHits",
-    "SiPixelHits"
+shuffler.CollectionsSiPad = [
+    "SiPadHits",
+    "SiPadHits"
 ]
-shuffler.OutputFile               = "shuffled.root"
+shuffler.OutputFile               = "shuffled.edm4hep.root"
 shuffler.OutputCollectionSiTarget = "SiTargetHitsMerged"
-shuffler.OutputCollectionSiPixel  = "SiPixelHitsMerged"
+shuffler.OutputCollectionSiPad  = "SiPadHitsMerged"
 
 ApplicationMgr(
     EvtSel  = "NONE",

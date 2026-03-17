@@ -8,7 +8,7 @@
 #include <memory>
 
 // Diagnostic algorithm that inspects the time structure of CaloHitContributions
-// in the SiTarget and SiPixel collections. No output collection is written.
+// in the SiTarget and SiPad collections. No output collection is written.
 // Intended to verify that the Geant4 time-of-flight field is populated before
 // implementing a time-based event merger.
 class ContributionInspector : public Gaudi::Algorithm {
@@ -26,7 +26,7 @@ private:
   Gaudi::Property<std::string> m_targetName{
       this, "SiTargetCollection", "SiTargetHits", "Input SiTarget SimCalorimeterHit collection"};
   Gaudi::Property<std::string> m_pixelName{
-      this, "SiPixelCollection", "SiPixelHits", "Input SiPixel SimCalorimeterHit collection"};
+      this, "SiPadCollection", "SiPadHits", "Input SiPad SimCalorimeterHit collection"};
   Gaudi::Property<int> m_maxHitsToPrint{
       this, "MaxHitsToPrint", 20, "Max number of hits per collection for which contributions are printed at DEBUG level"};
 

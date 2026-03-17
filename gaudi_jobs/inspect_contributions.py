@@ -11,7 +11,7 @@ iosvc.Input = INPUT_FILE
 
 inspector = ContributionInspector("ContribInspector")
 inspector.SiTargetCollection = "SiTargetHits"
-inspector.SiPixelCollection  = "SiPixelHits"
+inspector.SiPadCollection  = "SiPadHits"
 inspector.MaxHitsToPrint     = 20
 inspector.OutputLevel        = DEBUG  # show per-contribution DEBUG lines
 
