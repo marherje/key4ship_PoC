@@ -1,7 +1,0 @@
-executable              = /afs/cern.ch/user/m/marquezh/public/key4ship/key4ship_PoC/simulation/run_script/steer/runddsim_QGSP_BERT_SND_e-_50GeV_xyz_0.1_15.0_-1000.sh
-log                     = /afs/cern.ch/user/m/marquezh/public/key4ship/key4ship_PoC/simulation/run_script/log/runddsim_QGSP_BERT_SND_e-_50GeV_xyz_0.1_15.0_-1000.log
-output                  = /afs/cern.ch/user/m/marquezh/public/key4ship/key4ship_PoC/simulation/run_script/log/outfile_runddsim_QGSP_BERT_SND_e-_50GeV_xyz_0.1_15.0_-1000.txt
-error                   = /afs/cern.ch/user/m/marquezh/public/key4ship/key4ship_PoC/simulation/run_script/log/errors_runddsim_QGSP_BERT_SND_e-_50GeV_xyz_0.1_15.0_-1000.txt
-should_transfer_files   = Yes
-when_to_transfer_output = ON_EXIT
-queue 1
