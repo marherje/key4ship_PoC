@@ -18,18 +18,18 @@ public:
 
     m_inTargetHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
         m_inTargetName.value(),  Gaudi::DataHandle::Reader, this);
-    m_inPixelHandle   = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
-        m_inPixelName.value(),   Gaudi::DataHandle::Reader, this);
+    m_inPadHandle   = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
+        m_inPadName.value(),   Gaudi::DataHandle::Reader, this);
     m_outTargetHandle = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
         m_outTargetName.value(), Gaudi::DataHandle::Writer, this);
-    m_outPixelHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
-        m_outPixelName.value(),  Gaudi::DataHandle::Writer, this);
+    m_outPadHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
+        m_outPadName.value(),  Gaudi::DataHandle::Writer, this);
     // Contributions collections must also be registered so they are
     // persisted alongside the hit collections in the output file.
     m_outTargetContribsHandle = std::make_unique<k4FWCore::DataHandle<edm4hep::CaloHitContributionCollection>>(
         m_outTargetName.value() + "_Contributions", Gaudi::DataHandle::Writer, this);
-    m_outPixelContribsHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::CaloHitContributionCollection>>(
-        m_outPixelName.value()  + "_Contributions", Gaudi::DataHandle::Writer, this);
+    m_outPadContribsHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::CaloHitContributionCollection>>(
+        m_outPadName.value()  + "_Contributions", Gaudi::DataHandle::Writer, this);
     return sc;
   }
 
@@ -38,21 +38,21 @@ public:
     const bool      doPrint = (evtNum % m_debugFreq == 0);
 
     const auto* inTarget = m_inTargetHandle->get();
-    const auto* inPixel  = m_inPixelHandle->get();
+    const auto* inPad  = m_inPadHandle->get();
     auto* outTarget        = m_outTargetHandle->createAndPut();
-    auto* outPixel         = m_outPixelHandle->createAndPut();
+    auto* outPad         = m_outPadHandle->createAndPut();
     auto* outTargetContribs = m_outTargetContribsHandle->createAndPut();
-    auto* outPixelContribs  = m_outPixelContribsHandle->createAndPut();
+    auto* outPadContribs  = m_outPadContribsHandle->createAndPut();
 
     tagCollection(*inTarget, *outTarget, *outTargetContribs,
                   m_inTargetName.value(), evtNum, doPrint);
-    tagCollection(*inPixel,  *outPixel,  *outPixelContribs,
-                  m_inPixelName.value(),  evtNum, doPrint);
+    tagCollection(*inPad,  *outPad,  *outPadContribs,
+                  m_inPadName.value(),  evtNum, doPrint);
 
     if (doPrint) {
       info() << "[DelayTagger] evt=" << evtNum
              << ": SiTarget hits=" << inTarget->size()
-             << "  SiPixel hits=" << inPixel->size()
+             << "  SiPad hits=" << inPad->size()
              << "  delay=" << static_cast<double>(evtNum) * m_eventDelay << " ns"
              << endmsg;
     }
@@ -61,11 +61,11 @@ public:
 
   StatusCode finalize() override {
     m_inTargetHandle.reset();
-    m_inPixelHandle.reset();
+    m_inPadHandle.reset();
     m_outTargetHandle.reset();
-    m_outPixelHandle.reset();
+    m_outPadHandle.reset();
     m_outTargetContribsHandle.reset();
-    m_outPixelContribsHandle.reset();
+    m_outPadContribsHandle.reset();
     return Gaudi::Algorithm::finalize();
   }
 
@@ -112,23 +112,23 @@ private:
   // Python-configurable properties
   Gaudi::Property<std::string> m_inTargetName{
       this, "InputCollectionSiTarget", "SiTargetHits", "Input SiTarget SimCalorimeterHit collection"};
-  Gaudi::Property<std::string> m_inPixelName{
-      this, "InputCollectionSiPixel", "SiPixelHits", "Input SiPixel SimCalorimeterHit collection"};
+  Gaudi::Property<std::string> m_inPadName{
+      this, "InputCollectionSiPad", "SiPadHits", "Input SiPad SimCalorimeterHit collection"};
   Gaudi::Property<std::string> m_outTargetName{
       this, "OutputCollectionSiTarget", "SiTargetHitsDelayed", "Output SiTarget SimCalorimeterHit collection"};
-  Gaudi::Property<std::string> m_outPixelName{
-      this, "OutputCollectionSiPixel", "SiPixelHitsDelayed", "Output SiPixel SimCalorimeterHit collection"};
+  Gaudi::Property<std::string> m_outPadName{
+      this, "OutputCollectionSiPad", "SiPadHitsDelayed", "Output SiPad SimCalorimeterHit collection"};
   Gaudi::Property<double> m_eventDelay{
       this, "EventDelay", 25.0, "Time delay between consecutive input events (ns)"};
   Gaudi::Property<int> m_debugFreq{
       this, "DebugFrequency", 500, "Print debug/info lines every N events"};
 
   mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>   m_inTargetHandle;
-  mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>   m_inPixelHandle;
+  mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>   m_inPadHandle;
   mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>   m_outTargetHandle;
-  mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>   m_outPixelHandle;
+  mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>   m_outPadHandle;
   mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::CaloHitContributionCollection>> m_outTargetContribsHandle;
-  mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::CaloHitContributionCollection>> m_outPixelContribsHandle;
+  mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::CaloHitContributionCollection>> m_outPadContribsHandle;
   mutable std::atomic<long long> m_eventCount{0};
 };
 

@@ -29,14 +29,14 @@ public:
       const auto& ids     = m_sourceIDs.value();
       const auto& delays  = m_delays.value();
       const auto& colsT   = m_collsSiTarget.value();
-      const auto& colsP   = m_collsSiPixel.value();
+      const auto& colsP   = m_collsSiPad.value();
 
       if (files.size() != ids.size()   ||
           files.size() != delays.size() ||
           files.size() != colsT.size()  ||
           files.size() != colsP.size()) {
         error() << "[EventShuffler] InputFiles, SourceIDs, Delays, CollectionsSiTarget"
-                << " and CollectionsSiPixel must all have the same size. Got: "
+                << " and CollectionsSiPad must all have the same size. Got: "
                 << files.size()  << ", " << ids.size()   << ", "
                 << delays.size() << ", " << colsT.size() << ", " << colsP.size()
                 << endmsg;
@@ -72,7 +72,7 @@ public:
       const auto& ids     = m_sourceIDs.value();
       const auto& delays  = m_delays.value();
       const auto& colsT   = m_collsSiTarget.value();
-      const auto& colsP   = m_collsSiPixel.value();
+      const auto& colsP   = m_collsSiPad.value();
 
       // Quick scan to get event counts per source (needed for exhaustion warning).
       std::vector<size_t> nEventsVec(files.size());
@@ -122,7 +122,7 @@ public:
 
           const auto& hitsTarget =
               frame.get<edm4hep::SimCalorimeterHitCollection>(colsT[i]);
-          const auto& hitsPixel  =
+          const auto& hitsPad  =
               frame.get<edm4hep::SimCalorimeterHitCollection>(colsP[i]);
 
           auto accum = [&](const edm4hep::SimCalorimeterHitCollection& hits,
@@ -149,7 +149,7 @@ public:
           };
 
           accum(hitsTarget, m_bufferSiTarget);
-          accum(hitsPixel,  m_bufferSiPixel);
+          accum(hitsPad,  m_bufferSiPad);
         }
 
         if (nEvents < maxNEvents) {
@@ -200,22 +200,22 @@ public:
       };
 
       auto [outSiTarget, outSiTargetContribs, sourceIDsSiTarget] = buildColl(m_bufferSiTarget);
-      auto [outSiPixel,  outSiPixelContribs,  sourceIDsSiPixel]  = buildColl(m_bufferSiPixel);
+      auto [outSiPad,  outSiPadContribs,  sourceIDsSiPad]  = buildColl(m_bufferSiPad);
 
       const size_t nTarget = outSiTarget.size();
-      const size_t nPixel  = outSiPixel.size();
+      const size_t nPad  = outSiPad.size();
       const size_t nContribTarget = outSiTargetContribs.size();
-      const size_t nContribPixel  = outSiPixelContribs.size();
+      const size_t nContribPad  = outSiPadContribs.size();
 
       podio::ROOTWriter writer(m_outputFile.value());
       {
         podio::Frame outFrame;
         outFrame.put(std::move(outSiTarget),        m_outputCollSiTarget.value());
         outFrame.put(std::move(outSiTargetContribs), m_outputCollSiTarget.value() + "_Contributions");
-        outFrame.put(std::move(outSiPixel),          m_outputCollSiPixel.value());
-        outFrame.put(std::move(outSiPixelContribs),  m_outputCollSiPixel.value()  + "_Contributions");
+        outFrame.put(std::move(outSiPad),          m_outputCollSiPad.value());
+        outFrame.put(std::move(outSiPadContribs),  m_outputCollSiPad.value()  + "_Contributions");
         outFrame.putParameter("SiTargetSourceIDs", sourceIDsSiTarget);
-        outFrame.putParameter("SiPixelSourceIDs",  sourceIDsSiPixel);
+        outFrame.putParameter("SiPadSourceIDs",  sourceIDsSiPad);
         writer.writeFrame(outFrame, "events");
       }
       writer.finish();
@@ -231,8 +231,8 @@ public:
       }
       {
         std::map<int, int> dist;
-        for (int id : sourceIDsSiPixel) dist[id]++;
-        std::string msg = "[EventShuffler] SiPixel source_id distribution: ";
+        for (int id : sourceIDsSiPad) dist[id]++;
+        std::string msg = "[EventShuffler] SiPad source_id distribution: ";
         for (const auto& [id, cnt] : dist)
           msg += "source_id=" + std::to_string(id) + ": " + std::to_string(cnt) + " hits  ";
         debug() << msg << endmsg;
@@ -240,9 +240,9 @@ public:
 
       info() << "[EventShuffler] Super-event written to: " << m_outputFile.value() << endmsg;
       info() << "[EventShuffler] SiTarget cellIDs: " << nTarget << endmsg;
-      info() << "[EventShuffler] SiPixel cellIDs: "  << nPixel  << endmsg;
+      info() << "[EventShuffler] SiPad cellIDs: "  << nPad  << endmsg;
       info() << "[EventShuffler] Total contributions SiTarget: " << nContribTarget << endmsg;
-      info() << "[EventShuffler] Total contributions SiPixel: "  << nContribPixel  << endmsg;
+      info() << "[EventShuffler] Total contributions SiPad: "  << nContribPad  << endmsg;
 
       return Gaudi::Algorithm::finalize();
     } catch (const std::exception& e) {
@@ -272,17 +272,17 @@ private:
       this, "Delays", {}, "Inter-event delay in ns for each input file"};
   Gaudi::Property<std::vector<std::string>> m_collsSiTarget{
       this, "CollectionsSiTarget", {}, "SiTarget collection name for each input file"};
-  Gaudi::Property<std::vector<std::string>> m_collsSiPixel{
-      this, "CollectionsSiPixel", {}, "SiPixel collection name for each input file"};
+  Gaudi::Property<std::vector<std::string>> m_collsSiPad{
+      this, "CollectionsSiPad", {}, "SiPad collection name for each input file"};
   Gaudi::Property<std::string> m_outputFile{
       this, "OutputFile", "shuffled.root", "Output super-event ROOT file"};
   Gaudi::Property<std::string> m_outputCollSiTarget{
       this, "OutputCollectionSiTarget", "SiTargetHitsMerged", "Output SiTarget collection name"};
-  Gaudi::Property<std::string> m_outputCollSiPixel{
-      this, "OutputCollectionSiPixel", "SiPixelHitsMerged", "Output SiPixel collection name"};
+  Gaudi::Property<std::string> m_outputCollSiPad{
+      this, "OutputCollectionSiPad", "SiPadHitsMerged", "Output SiPad collection name"};
 
   mutable std::map<uint64_t, std::vector<ContribData>> m_bufferSiTarget;
-  mutable std::map<uint64_t, std::vector<ContribData>> m_bufferSiPixel;
+  mutable std::map<uint64_t, std::vector<ContribData>> m_bufferSiPad;
 };
 
 DECLARE_COMPONENT(EventShuffler)

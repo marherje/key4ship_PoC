@@ -7,27 +7,29 @@ find_package(k4FWCore REQUIRED)
 find_package(EDM4HEP REQUIRED)
 find_package(ROOT REQUIRED COMPONENTS ROOTNTuple)
 
-dd4hep_add_plugin(SiPadDetector_plugin SOURCES plugins/SiPadDetector.cpp)
+dd4hep_add_plugin(SiPadDetector_plugin SOURCES detector_plugin/SiPadDetector.cpp)
 target_link_libraries(SiPadDetector_plugin DD4hep::DDCore)
 
-dd4hep_add_plugin(SiTargetDetector_plugin SOURCES plugins/SiTargetDetector.cpp)
+dd4hep_add_plugin(SiTargetDetector_plugin SOURCES detector_plugin/SiTargetDetector.cpp)
 target_link_libraries(SiTargetDetector_plugin DD4hep::DDCore)
 
 gaudi_add_module(SND_reco
   SOURCES
-    reco/GeV2MIPConversion.cpp
-    reco/BasicDigitizer.cpp
-    reco/ContributionInspector.cpp
-    reco/DelayTagger.cpp
-    reco/EventMerger.cpp
-    reco/EventWindowSplitter.cpp
-    reco/EventShuffler.cpp
+    gaudi_source/GeV2MIPConversion.cpp
+    gaudi_source/BasicDigitizer.cpp
+    gaudi_source/ContributionInspector.cpp
+    gaudi_source/DelayTagger.cpp
+    gaudi_source/EventMerger.cpp
+    gaudi_source/EventWindowSplitter.cpp
+    gaudi_source/EventShuffler.cpp
+    gaudi_source/EDM4HEP2RNTuple.cpp
   LINK
     Gaudi::GaudiKernel
     k4FWCore::k4FWCore
     EDM4HEP::edm4hep
     podio::podioRootIO
     DD4hep::DDCore
+    ROOT::ROOTNTuple
 )
 
 install(TARGETS SiPadDetector_plugin SiTargetDetector_plugin LIBRARY DESTINATION lib)

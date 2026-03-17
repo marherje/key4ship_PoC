@@ -32,24 +32,24 @@ public:
     if (sc.isFailure()) return sc;
     m_inTargetHandle = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
         m_inTargetName.value(), Gaudi::DataHandle::Reader, this);
-    m_inPixelHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
-        m_inPixelName.value(),  Gaudi::DataHandle::Reader, this);
+    m_inPadHandle  = std::make_unique<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
+        m_inPadName.value(),  Gaudi::DataHandle::Reader, this);
     return sc;
   }
 
   StatusCode execute(const EventContext&) const override {
     const auto* inTarget = m_inTargetHandle->get();
-    const auto* inPixel  = m_inPixelHandle->get();
+    const auto* inPad  = m_inPadHandle->get();
 
     accumulate(*inTarget, m_bufferSiTarget);
-    accumulate(*inPixel,  m_bufferSiPixel);
+    accumulate(*inPad,  m_bufferSiPad);
 
     ++m_eventCount;
 
     if (m_eventCount % 100 == 0) {
       info() << "[EventMerger] Accumulated evt=" << m_eventCount
              << "  SiTarget cellIDs=" << m_bufferSiTarget.size()
-             << "  SiPixel cellIDs="  << m_bufferSiPixel.size()
+             << "  SiPad cellIDs="  << m_bufferSiPad.size()
              << endmsg;
     }
     return StatusCode::SUCCESS;
@@ -57,7 +57,7 @@ public:
 
   StatusCode finalize() override {
     m_inTargetHandle.reset();
-    m_inPixelHandle.reset();
+    m_inPadHandle.reset();
 
     // Write the single super-event directly via podio::ROOTWriter.
     podio::ROOTWriter writer(m_outputFile.value());
@@ -65,19 +65,19 @@ public:
       podio::Frame frame;
 
       auto [siTargetColl, siTargetContribs] = buildCollection(m_bufferSiTarget);
-      auto [siPixelColl,  siPixelContribs]  = buildCollection(m_bufferSiPixel);
+      auto [siPadColl,  siPadContribs]  = buildCollection(m_bufferSiPad);
 
       frame.put(std::move(siTargetColl),    m_outTargetName.value());
       frame.put(std::move(siTargetContribs), m_outTargetName.value() + "_Contributions");
-      frame.put(std::move(siPixelColl),     m_outPixelName.value());
-      frame.put(std::move(siPixelContribs),  m_outPixelName.value()  + "_Contributions");
+      frame.put(std::move(siPadColl),     m_outPadName.value());
+      frame.put(std::move(siPadContribs),  m_outPadName.value()  + "_Contributions");
 
       writer.writeFrame(frame, "events");
     }
     writer.finish();
 
     info() << "[EventMerger] Super-event written: SiTarget cellIDs=" << m_bufferSiTarget.size()
-           << "  SiPixel cellIDs=" << m_bufferSiPixel.size() << endmsg;
+           << "  SiPad cellIDs=" << m_bufferSiPad.size() << endmsg;
     info() << "[EventMerger] Total input events merged: " << m_eventCount << endmsg;
 
     return Gaudi::Algorithm::finalize();
@@ -128,21 +128,21 @@ private:
   // Python-configurable properties
   Gaudi::Property<std::string> m_inTargetName{
       this, "InputCollectionSiTarget", "SiTargetHitsDelayed", "Input SiTarget collection"};
-  Gaudi::Property<std::string> m_inPixelName{
-      this, "InputCollectionSiPixel", "SiPixelHitsDelayed", "Input SiPixel collection"};
+  Gaudi::Property<std::string> m_inPadName{
+      this, "InputCollectionSiPad", "SiPadHitsDelayed", "Input SiPad collection"};
   Gaudi::Property<std::string> m_outputFile{
       this, "OutputFile", "superevent.edm4hep.root", "Output ROOT file for the super-event"};
   Gaudi::Property<std::string> m_outTargetName{
       this, "OutputCollectionSiTarget", "SiTargetHitsMerged", "Output SiTarget collection name"};
-  Gaudi::Property<std::string> m_outPixelName{
-      this, "OutputCollectionSiPixel", "SiPixelHitsMerged", "Output SiPixel collection name"};
+  Gaudi::Property<std::string> m_outPadName{
+      this, "OutputCollectionSiPad", "SiPadHitsMerged", "Output SiPad collection name"};
 
   mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>> m_inTargetHandle;
-  mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>> m_inPixelHandle;
+  mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>> m_inPadHandle;
 
   // Accumulation buffers: cellID -> list of contributions from all input events.
   mutable std::map<uint64_t, std::vector<ContribData>> m_bufferSiTarget;
-  mutable std::map<uint64_t, std::vector<ContribData>> m_bufferSiPixel;
+  mutable std::map<uint64_t, std::vector<ContribData>> m_bufferSiPad;
   mutable long long m_eventCount{0};
 };
 

@@ -30,8 +30,9 @@
     <constant name="Ecal_NcellsY"            value="32"/>
     <constant name="Ecal_CellSizeX"          value="5.5*mm"/>
     <constant name="Ecal_CellSizeY"          value="5.5*mm"/>
-    <constant name="Ecal_dim_x"              value="4*Ecal_NcellsX*Ecal_CellSizeX"/>
-    <constant name="Ecal_dim_y"              value="4*Ecal_NcellsY*Ecal_CellSizeY"/>
+    <constant name="Ecal_dim_x"              value="2*Ecal_NcellsX*Ecal_CellSizeX"/>
+    <constant name="Ecal_dim_y"              value="2*Ecal_NcellsY*Ecal_CellSizeY"/>
+    <constant name="Ecal_z_position"         value="0*mm"/>
     <constant name="Ecal_dim_z"              value="330*mm"/>
     <constant name="Ecal_WThickness"         value="3.5*mm"/>
     <constant name="Ecal_CFThickness"        value="1.5*mm"/>
@@ -52,10 +53,11 @@
     <constant name="SiTarget_module_offset"  value="1*mm"/>
     <constant name="SiTarget_sensor_thickness" value="0.3*mm"/>
     <constant name="SiTarget_XY_plane_gap" value="5.5*mm"/>
+    <constant name="SiTarget_LayerDistance"      value="11.0*mm"/>
     <constant name="SiTarget_env_width"      value="400*mm"/>
     <constant name="SiTarget_env_height"     value="400*mm"/>
+    <constant name="SiTarget_env_z"          value="SiTarget_NLayers*SiTarget_LayerDistance"/>
     <constant name="SiTarget_z_position"     value="-300*mm"/>
-    <constant name="SiTarget_LayerDistance"      value="11.0*mm"/>
     <constant name="SiTarget_layer_gap"      value="SiTarget_LayerDistance-SiTarget_WThickness-2*SiTarget_sensor_thickness-SiTarget_XY_plane_gap"/>
   </define>
 
@@ -67,18 +69,18 @@
 
   <display>
     <vis name="Invisible"    alpha="0.0" r="0"   g="0"    b="0"    showDaughters="false" visible="false"/>
-    <vis name="EcalVis"      alpha="0.5" r="0.7" g="0.7"  b="0.0"  showDaughters="true"  visible="false"/>
-    <vis name="TungstenVis"  alpha="1.0" r="0.5" g="0.35" b="0.55" showDaughters="true"  visible="true"/>
-    <vis name="AirVis"       alpha="1.0" r="0.0" g="1.0"  b="0.0"  showDaughters="true"  visible="false"/>
-    <vis name="SiVis"        alpha="1.0" r="0.9" g="0.9"  b="0.9"  showDaughters="true"  visible="true"/>
-    <vis name="AlVis"        alpha="1.0" r="0.7" g="0.7"  b="0.7"  showDaughters="true"  visible="true"/>
-    <vis name="PCBVis"       alpha="1.0" r="0.0" g="0.8"  b="0.0"  showDaughters="true"  visible="true"/>
-    <vis name="CFVis"        alpha="0.5" r="0.0" g="0.0"  b="0.0"  showDaughters="true"  visible="false"/>
-    <vis name="CuVis"        alpha="0.5" r="1.0" g="0.5"  b="0.0"  showDaughters="true"  visible="false"/>
+    <vis name="EcalVis"      alpha="0.1" r="0.7" g="0.7"  b="0.0"  showDaughters="true"  visible="false"/>
+    <vis name="TungstenVis"  alpha="0.5" r="0.5" g="0.35" b="0.55" showDaughters="true"  visible="true"/>
+    <vis name="AirVis"       alpha="0.01" r="1.0" g="1.0"  b="1.0"  showDaughters="true"  visible="false"/>
+    <vis name="SiVis"        alpha="0.5" r="0.9" g="0.9"  b="0.9"  showDaughters="true"  visible="true"/>
+    <vis name="AlVis"        alpha="0.1" r="0.7" g="0.7"  b="0.7"  showDaughters="true"  visible="true"/>
+    <vis name="PCBVis"       alpha="0.1" r="0.0" g="0.8"  b="0.0"  showDaughters="true"  visible="true"/>
+    <vis name="CFVis"        alpha="0.1" r="0.0" g="0.0"  b="0.0"  showDaughters="true"  visible="false"/>
+    <vis name="CuVis"        alpha="0.1" r="1.0" g="0.5"  b="0.0"  showDaughters="true"  visible="false"/>
   </display>
 
   <readouts>
-    <readout name="SiPixelHits">
+    <readout name="SiPadHits">
       <segmentation type="CartesianGridXY"
                     grid_size_x="Ecal_CellSizeX"
                     grid_size_y="Ecal_CellSizeY"
@@ -96,7 +98,7 @@
   </readouts>
 
   <detectors>
-    <include ref="SiPixelDetector.xml"/> 
+    <include ref="SiPadDetector.xml"/> 
     <include ref="SiTarget.xml"/>
   </detectors>
 

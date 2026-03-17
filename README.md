@@ -1,6 +1,6 @@
 # SND_sim proof-of-concept of full key4hep sim+reco chain: dd4hep + ddsim + gaudi
 
-SND PoC with STarget and SiPixel — DD4hep v01-35 / key4hep 2026-02-01
+SND PoC with STarget and SiPad — DD4hep v01-35 / key4hep 2026-02-01
 
 ## Target stack (key4hep latest release in Feb 2026)
 - DD4hep: v01-35
