@@ -13,22 +13,24 @@ import argparse
 import ROOT
 
 # ---------------------------------------------------------------------------
-# 1. CONSTANTS  (all Z values and sizes in cm — TGeo/TEve use cm)
+# 1. CONSTANTS  (sizes in cm — TGeo/TEve use cm)
 # ---------------------------------------------------------------------------
 
-# Copy here the output from inspect_SND.py                                                                                                                       
-SIPAD_X = [                                                                                                                                                      
-    -6.70, -5.25, -3.80, -2.35, -0.90, 0.55, 2.00, 3.45,                                                                                                         
-    4.90, 6.35,                                                                                                                                                  
-]                                                                                                                                                                
-SITARGET_Y_X = [                                                                                                                                                 
-    -18.79, -17.69, -16.59, -15.49, -14.39, -13.29, -12.19,                                                                                                      
-    -11.09, -9.99, -8.89,                                                                                                                                        
-]                                                                                                                                                                
-SITARGET_Z_X = [                                                                                                                                                 
-    -18.21, -17.11, -16.01, -14.91, -13.81, -12.71, -11.61,                                                                                                      
-    -10.51, -9.41, -8.31,                                                                                                                                        
-]     
+# Copy here the output from inspect_SND.py
+# SiPad stacks along X  → SIPAD_X holds X positions of sensitive planes
+# SiTarget stacks along Z → SITARGET_* hold Z positions of sensitive planes
+SIPAD_X = [
+    -6.70, -5.25, -3.80, -2.35, -0.90, 0.55, 2.00, 3.45,
+    4.90, 6.35,
+]
+SITARGET_X_Y = [
+    -18.79, -17.69, -16.59, -15.49, -14.39, -13.29, -12.19,
+    -11.09, -9.99, -8.89,
+]
+SITARGET_X_Z = [
+    -18.21, -17.11, -16.01, -14.91, -13.81, -12.71, -11.61,
+    -10.51, -9.41, -8.31,
+]
 
 # Source ID → (R, G, B) in 0-1 range
 SOURCE_RGB = {
@@ -65,7 +67,7 @@ def read_hits(hits_file, ntuple_name, window_id):
     All RNTuple objects live inside a C++ block (ProcessLine) so Python's GC
     never touches them.  Coordinates are converted from mm to cm on return.
 
-    SiTarget has a bf_plane field (0=X strip, 1=Y strip).
+    SiTarget has a bf_plane field (0=Y strip, 1=Z strip).
     SiPad does not — gPlane is set to -1 for all SiPad entries.
 
     Returns: xs, ys, zs, Es, srcs, planes  (plain Python lists, coords in cm)
@@ -126,9 +128,9 @@ def read_hits(hits_file, ntuple_name, window_id):
 # ---------------------------------------------------------------------------
 # 4. NEAREST LAYER SNAPPING
 # ---------------------------------------------------------------------------
-def nearest_z(hit_x_cm, plane_x_list):
-    """Return the X of the closest sensitive plane to hit_x_cm."""
-    return min(plane_x_list, key=lambda x: abs(x - hit_x_cm))
+def nearest_plane(hit_cm, plane_list):
+    """Return the position of the closest sensitive plane to hit_cm."""
+    return min(plane_list, key=lambda p: abs(p - hit_cm))
 
 
 # ---------------------------------------------------------------------------
@@ -163,35 +165,34 @@ def build_geometry(eve):
     """
     geo_list = ROOT.TEveElementList("Geometry")
 
-    # SiPad planes
+    # SiPad planes — stacks along X, each plane is a YZ face
     sipad_list = ROOT.TEveElementList("SiPad planes")
     for i, x in enumerate(SIPAD_X):
-        gs = make_box(f"SiPad_{i}", 17.6, 17.6, 0.0325,
+        gs = make_box(f"SiPad_{i}", 0.0325, 17.6, 17.6,
                       x, 0.0, 0.0,
                       ROOT.kGreen - 6, transparency=90)
         sipad_list.AddElement(gs)
     geo_list.AddElement(sipad_list)
 
-    # SiTarget Y planes
+    # SiTarget planes — stacks along Z, each plane is an XY face
     sitgt_y_list = ROOT.TEveElementList("SiTarget Y planes")
-    for i, x in enumerate(SITARGET_Y_X):
-        gs = make_box(f"SiTarget_Y_{i}", 20.0, 20.0, 0.015,
+    for i, x in enumerate(SITARGET_X_Y):
+        gs = make_box(f"SiTarget_Y_{i}", 0.015, 20.0, 20.0,
                       x, 0.0, 0.0,
                       ROOT.kAzure + 7, transparency=90)
         sitgt_y_list.AddElement(gs)
     geo_list.AddElement(sitgt_y_list)
 
-    # SiTarget Z planes
     sitgt_z_list = ROOT.TEveElementList("SiTarget Z planes")
-    for i, x in enumerate(SITARGET_Z_X):
-        gs = make_box(f"SiTarget_Z_{i}", 20.0, 20.0, 0.015,
+    for i, x in enumerate(SITARGET_X_Z):
+        gs = make_box(f"SiTarget_Z_{i}", 0.015, 20.0, 20.0,
                       x, 0.0, 0.0,
                       ROOT.kAzure + 9, transparency=90)
         sitgt_z_list.AddElement(gs)
     geo_list.AddElement(sitgt_z_list)
 
     eve.GetGlobalScene().AddElement(geo_list)
-    print("[Geometry] Added SiPad (10) + SiTarget X (10) + SiTarget Y (10) + SiTarget Z (10) planes")
+    print("[Geometry] Added SiPad (10) + SiTarget Y (10) + SiTarget Z (10) planes")
 
 
 # ---------------------------------------------------------------------------
@@ -232,25 +233,26 @@ def build_hits(eve, hits_file, window_id, source_labels):
                 xc, yc, zc = xs[i], ys[i], zs[i]
 
                 if det == "SiPad":
-                    snap_x = nearest_x(xc, SIPAD_X)
+                    # SiPad: thin in X (stacking axis), hit at precise Y,Z
+                    snap_x = nearest_plane(xc, SIPAD_X)
                     gs = make_box(f"SiPad_hit_{i}",
-                                  0.275, 0.275, 0.0325,
+                                  0.0325, 0.275, 0.275,
                                   snap_x, yc, zc,
                                   color, transparency=0)
 
-                else:  # SiTarget
+                else:  # SiTarget: stacks in Z, strips in XY plane
                     plane = planes[i]
-                    if plane == 0:   # X strip: precise X, full Y span
-                        snap_x = nearest_x(xc, SITARGET_Z_X)
-                        gs = make_box(f"SiTgt_Z_hit_{i}",
-                                      0.015,0.003775, 20.0,
-                                      snap_x, 0.0, zc,
-                                      color, transparency=0)
-                    else:            # Y strip (plane==1): precise Y, full X span
-                        snap_x = nearest_x(zc, SITARGET_Y_X)
+                    if plane == 0:   # Y-measuring strip: precise Y, full X span
+                        snap_x = nearest_plane(xc, SITARGET_X_Y)
                         gs = make_box(f"SiTgt_Y_hit_{i}",
-                                      20.0, 0.015,0.003775,
-                                      0.0, yc, snap_x,
+                                      0.015, 0.003775, 20.0,
+                                      snap_x, yc, 0.0,
+                                      color, transparency=0)
+                    else:            # Z-measuring strip (plane==1): precise X, full Y span
+                        snap_x = nearest_plane(xc, SITARGET_X_Z)
+                        gs = make_box(f"SiTgt_Z_hit_{i}",
+                                      0.015, 20.0, 0.003775, 
+                                      snap_x, 0.0, zc,
                                       color, transparency=0)
 
                 grp.AddElement(gs)

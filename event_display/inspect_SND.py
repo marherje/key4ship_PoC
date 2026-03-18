@@ -29,11 +29,18 @@ def walk(node, path=""):
         if ok:
             t = mgr.GetCurrentMatrix().GetTranslation()
             s = shape
-            print(f"{detector:<12} {name:<45} "
-                  f"z={t[2]:8.2f}  "
-                  f"half_yz=({s.GetDX():.1f},{s.GetDY():.1f})  "
-                  f"half_x={s.GetDZ():.2f} cm")
-            z_lists[detector].append(round(t[2], 2))
+            if detector == "SiPad":
+                print(f"{detector:<12} {name:<45} "
+                      f"x={t[0]:8.2f}  "
+                      f"half_yz=({s.GetDY():.1f},{s.GetDZ():.1f})  "
+                      f"half_x={s.GetDX():.2f} cm")
+                z_lists[detector].append(round(t[0], 2))
+            else:
+                print(f"{detector:<12} {name:<45} "
+                      f"z={t[2]:8.2f}  "
+                      f"half_xy=({s.GetDX():.1f},{s.GetDY():.1f})  "
+                      f"half_z={s.GetDZ():.2f} cm")
+                z_lists[detector].append(round(t[2], 2))
 
     for i in range(node.GetNdaughters()):
         walk(node.GetDaughter(i), current_path)
