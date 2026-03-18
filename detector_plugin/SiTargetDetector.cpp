@@ -20,11 +20,11 @@ dd4hep::Ref_t create_SiTarget(dd4hep::Detector& description,
   xml_comp_t x_par = x_det.child(_Unicode(parameters));
   double env_w = x_par.attr<double>(_Unicode(env_width));
   double env_h = x_par.attr<double>(_Unicode(env_height));
-  double z0    = x_par.attr<double>(_Unicode(z_position));
+  double x0    = x_par.attr<double>(_Unicode(x_position));
   Material mat_air = description.air();
 
-  // -- First pass: compute total Z extent ------------------------------------
-  double total_z = 0.0;
+  // -- First pass: compute total Y extent ------------------------------------
+  double total_x = 0.0;
   for (xml_coll_t lColl(x_det, _Unicode(layer)); lColl; ++lColl) {
     xml_comp_t x_layer = lColl;
     int    repeat  = x_layer.hasAttr(_Unicode(repeat))
@@ -34,23 +34,23 @@ dd4hep::Ref_t create_SiTarget(dd4hep::Detector& description,
     double layer_thick = 0.0;
     for (xml_coll_t sColl(x_layer, _Unicode(slice)); sColl; ++sColl)
       layer_thick += xml_comp_t(sColl).attr<double>(_Unicode(thickness));
-    total_z += repeat * (layer_thick + spacing);
+    total_x += repeat * (layer_thick + spacing);
   }
 
   // -- Global envelope -------------------------------------------------------
-  double env_cz = z0 + total_z / 2.0;
-  Box    env_shape(env_w / 2.0, env_h / 2.0, total_z / 2.0);
+  double env_cx = x0;
+  Box    env_shape( total_x / 2.0, env_w / 2.0, env_h / 2.0);
   Volume env_vol(name + "_envelope", env_shape, mat_air);
   env_vol.setVisAttributes(description, "InvisibleNoDaughters");
 
   Volume       motherVol = description.pickMotherVolume(sdet);
-  PlacedVolume env_pv   = motherVol.placeVolume(env_vol, Position(0.0, 0.0, env_cz));
+  PlacedVolume env_pv   = motherVol.placeVolume(env_vol, Position(env_cx, 0.0, 0.0));
   env_pv.addPhysVolID("system", det_id);
   sdet.setPlacement(env_pv);
 
   // -- Global counters -------------------------------------------------------
   int    layer_idx = 0;
-  double cur_z     = -total_z / 2.0;
+  double cur_x     = -total_x / 2.0;
 
   // -- Loop over <layer> -----------------------------------------------------
   for (xml_coll_t lColl(x_det, _Unicode(layer)); lColl; ++lColl) {
@@ -68,20 +68,20 @@ dd4hep::Ref_t create_SiTarget(dd4hep::Detector& description,
     for (int rep = 0; rep < repeat; rep++, layer_idx++) {
 
       std::string  layer_name = name + "_layer_" + std::to_string(layer_idx);
-      Box          layer_box(env_w / 2.0, env_h / 2.0, layer_thick / 2.0);
+      Box          layer_box(layer_thick / 2.0, env_w / 2.0, env_h / 2.0);
       Volume       layer_vol(layer_name, layer_box, mat_air);
       layer_vol.setVisAttributes(description, "InvisibleWithDaughters");
 
-      double       layer_center_z = cur_z + layer_thick / 2.0;
+      double       layer_center_x = cur_x + layer_thick / 2.0;
       PlacedVolume layer_pv = env_vol.placeVolume(layer_vol,
-                                Position(0.0, 0.0, layer_center_z));
+                                Position(layer_center_x, 0.0, 0.0));
       layer_pv.addPhysVolID("layer", layer_idx);
 
       DetElement layer_de(sdet, layer_name, layer_idx);
       layer_de.setPlacement(layer_pv);
 
       // -- Loop over <slice> -----------------------------------------------
-      double local_z        = -layer_thick / 2.0;
+      double local_x        = -layer_thick / 2.0;
       int    slice_in_layer = 0;
 
       for (xml_coll_t sColl(x_layer, _Unicode(slice)); sColl; ++sColl, ++slice_in_layer) {
@@ -99,7 +99,7 @@ dd4hep::Ref_t create_SiTarget(dd4hep::Detector& description,
 
         std::string  slice_name = layer_name + "_slice_" + std::to_string(slice_in_layer);
         Material     mat        = description.material(mat_name);
-        Box          sl_box(env_w / 2.0, env_h / 2.0, thick / 2.0);
+        Box          sl_box(thick / 2.0, env_w / 2.0, env_h / 2.0);
         Volume       sl_vol(slice_name, sl_box, mat);
 
         if (x_slice.hasAttr(_Unicode(vis)))
@@ -108,17 +108,17 @@ dd4hep::Ref_t create_SiTarget(dd4hep::Detector& description,
         if (is_sens)
           sl_vol.setSensitiveDetector(sens);
 
-        double       sl_center_z = local_z + thick / 2.0;
+        double       sl_center_x = local_x + thick / 2.0;
         PlacedVolume sl_pv;
         if (is_sens && plane_id == 1) {
-          // Rotate Y plane 90 degrees around Z so that local X -> global Y.
+          // Rotate Y plane 90 degrees around X so that local Z -> global Y.
           // CartesianStripX will then measure strips along global Y.
           sl_pv = layer_vol.placeVolume(sl_vol,
-                    Transform3D(RotationZYX(M_PI / 2.0, 0.0, 0.0),
-                                Position(0.0, 0.0, sl_center_z)));
+                    Transform3D(RotationZYX(0.0, 0.0, M_PI / 2.0),
+                                Position(sl_center_x,0.0, 0.0)));
         } else {
           sl_pv = layer_vol.placeVolume(sl_vol,
-                    Position(0.0, 0.0, sl_center_z));
+                    Position(sl_center_x,0.0, 0.0));
         }
         sl_pv.addPhysVolID("system", det_id);
         sl_pv.addPhysVolID("layer",  layer_idx);
@@ -133,10 +133,10 @@ dd4hep::Ref_t create_SiTarget(dd4hep::Detector& description,
           sl_de.setPlacement(sl_pv);
         }
 
-        local_z += thick;
+        local_x += thick;
       }
 
-      cur_z += layer_thick + spacing;
+      cur_x += layer_thick + spacing;
     }
   }
 
