@@ -12,7 +12,7 @@
            dz="Ecal_dim_z/2.0 + env_safety"
            material="Air"/>
     <rotation x="0" y="0" z="0"/>
-    <position x="0" y="0" z="0"/>
+    <position x="Ecal_x_position" y="0" z="0"/>
   </envelope>
 
   <!-- Layers 2-4: W(1.40x) + W(4.20x) + CF + Cu + glue + Si(650um) + glue + Cu + PCB + chip + gap -->

@@ -40,7 +40,7 @@ import os
 from DDSim.DD4hepSimulation import DD4hepSimulation
 from g4units import mm, GeV
 
-gun_direction = (0, 0, 1)
+gun_direction = (1, 0, 0)
 gun_position = (${pos_x} * mm, ${pos_y} * mm, ${pos_z} * mm)
 
 compact_path = os.path.abspath("${geometry_folder}/SND_compact.xml")
@@ -103,6 +103,7 @@ output                  = ${log_path}/outfile_${condorfile}.txt
 error                   = ${log_path}/errors_${condorfile}.txt
 should_transfer_files   = Yes
 when_to_transfer_output = ON_EXIT
++JobFlavour             = "tomorrow"
 queue 1
 EOF
 
