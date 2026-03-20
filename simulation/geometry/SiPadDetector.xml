@@ -3,7 +3,7 @@
 
   <dimensions x="Ecal_dim_x" y="Ecal_dim_y" z="Ecal_dim_z"/>
 
-  <type_flags type="1"/>
+  <type_flags type="DetType_TRACKER + DetType_BARREL + DetType_PIXEL"/>
 
   <envelope vis="EcalVis">
     <shape type="Box"

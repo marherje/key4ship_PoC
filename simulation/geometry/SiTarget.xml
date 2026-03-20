@@ -3,7 +3,7 @@
 
   <dimensions y="SiTarget_env_width" z="SiTarget_env_height"/>
 
-  <type_flags type="1"/>
+  <type_flags type="DetType_TRACKER + DetType_BARREL + DetType_STRIP"/>
 
   <parameters
         env_width="SiTarget_env_width"
