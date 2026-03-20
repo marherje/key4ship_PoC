@@ -32,7 +32,7 @@
 
     <!-- ECAL geometry constants (from ECAL_commondefs.xml) -->
     <constant name="env_safety"              value="0.001*mm"/>
-    <constant name="Ecal_NLayers"            value="10"/>
+    <constant name="Ecal_NLayers"            value="20"/>
     <constant name="Ecal_NcellsY"            value="32"/>
     <constant name="Ecal_NcellsZ"            value="32"/>
     <constant name="Ecal_CellSizeY"          value="5.5*mm"/>
@@ -54,7 +54,7 @@
     <constant name="Ecal_dim_x"              value="Ecal_NLayers*Ecal_LayerThickness"/>
 
     <!-- SiTarget constants (from FairShip SiliconTarget_config.yaml) -->
-    <constant name="SiTarget_NLayers"       value="10"/>
+    <constant name="SiTarget_NLayers"       value="20"/>
     <constant name="SiTarget_WThickness"     value="3.5*mm"/>
     <constant name="SiTarget_strip_pitch"    value="0.0755*mm"/>
     <constant name="SiTarget_module_offset"  value="1*mm"/>
