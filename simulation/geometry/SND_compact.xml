@@ -13,6 +13,13 @@
   </includes>
 
   <define>
+    <!-- Detector type flag constants from DD4hep DetType.h -->
+    <!-- These are needed by ACTS convertDD4hepDetector to classify subdetectors -->
+    <constant name="DetType_TRACKER"  value="0x1"/>
+    <constant name="DetType_BARREL"   value="0x10"/>
+    <constant name="DetType_STRIP"    value="0x80"/>
+    <constant name="DetType_PIXEL"    value="0x100"/>
+
     <!-- World -->
     <constant name="world_side" value="20*m"/>
     <constant name="world_x"    value="world_side"/>

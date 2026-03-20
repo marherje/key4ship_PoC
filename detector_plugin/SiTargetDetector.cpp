@@ -1,4 +1,5 @@
 #include "DD4hep/DetFactoryHelper.h"
+#include "XML/Utilities.h"
 #include "DD4hep/Printout.h"
 #include <cmath>
 #include <string>
@@ -15,6 +16,7 @@ dd4hep::Ref_t create_SiTarget(dd4hep::Detector& description,
   DetElement  sdet(name, det_id);
 
   sens.setType("calorimeter");
+  xml::setDetectorTypeFlag(element, sdet);   // needed by ACTS convertDD4hepDetector
 
   // -- Global envelope parameters -------------------------------------------
   xml_comp_t x_par = x_det.child(_Unicode(parameters));
