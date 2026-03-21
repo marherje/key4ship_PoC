@@ -10,7 +10,6 @@
 #include "Acts/Geometry/Layer.hpp"
 #include "Acts/Geometry/LayerArrayCreator.hpp"
 #include "Acts/Geometry/PlaneLayer.hpp"
-#include "Acts/Geometry/SurfaceArrayCreator.hpp"
 #include "Acts/Geometry/TrackingGeometry.hpp"
 #include "Acts/Geometry/TrackingVolume.hpp"
 #include "Acts/Geometry/TrackingVolumeArrayCreator.hpp"
@@ -180,44 +179,9 @@ StatusCode ACTSGeoSvc::initialize() {
   // All layers are placed in a single CuboidVolumeBounds TrackingVolume.
   // =========================================================================
 
-  // ---- Step 1: Create one PlaneSurface per sensitive plane ----------------
-  // Surfaces have absolute positions in the global frame.
-  // The surface normal points along the global X axis (beam direction).
-  std::vector<std::shared_ptr<const Acts::Surface>> allSurfaces;
-  allSurfaces.reserve(allPlanes.size());
-
-  for (const auto& pi : allPlanes) {
-    Acts::RotationMatrix3 rot = (pi.plane == 1) ? rotStripZ : rotIdentity;
-
-    // Build the rotation matrix: surface normal along X axis.
-    // For a plane perpendicular to X, the local frame has:
-    //   local x = global Y, local y = global Z (for StripY, plane=0)
-    // For StripZ (plane=1), rotate 90 deg around X:
-    //   local x = global Z, local y = global Y
-    // The Transform3 places the surface at (pi.x, 0, 0) with
-    // the given rotation.
-    Acts::Transform3 transform = Acts::Transform3::Identity();
-    transform.rotate(rot);
-    transform.pretranslate(Acts::Vector3(pi.x, 0.0, 0.0));
-
-    auto bounds = std::make_shared<Acts::RectangleBounds>(
-        pi.halfY, pi.halfZ);
-
-    auto surface = Acts::Surface::makeShared<Acts::PlaneSurface>(
-        transform, bounds);
-
-    allSurfaces.push_back(surface);
-
-    info() << "[ACTSGeoSvc]   PlaneSurface at x=" << pi.x
-           << " halfY=" << pi.halfY << " halfZ=" << pi.halfZ
-           << " plane=" << pi.plane << endmsg;
-  }
-
   // ---- Step 2: Create one PlaneLayer per surface --------------------------
-  // Each layer wraps one sensitive surface in a SurfaceArray.
-  // The layer thickness is 2 * pi.thickness (full thickness, not half).
-  // The layer is positioned at the same transform as its surface.
-
+  // Pass nullptr for surfaceArray: the PlaneLayer IS the sensitive surface.
+  // The Navigator will resolve it directly via the layer surface representation.
   std::vector<Acts::LayerPtr> allLayers;
   allLayers.reserve(allPlanes.size());
 
@@ -232,33 +196,17 @@ StatusCode ACTSGeoSvc::initialize() {
     auto bounds = std::make_shared<Acts::RectangleBounds>(
         pi.halfY, pi.halfZ);
 
-    // SurfaceArray: wraps the single sensitive surface for this layer.
-    // Use a 1-bin array (no binning needed for single-surface layers).
-    std::vector<std::shared_ptr<const Acts::Surface>> layerSurfaces = {
-    allSurfaces[i]};
-
-    Acts::SurfaceArrayCreator sacCreator(
-        Acts::SurfaceArrayCreator::Config{},
-        Acts::getDefaultLogger("SurfaceArrayCreator",
-                               Acts::Logging::WARNING));
-
-    auto surfArray = sacCreator.surfaceArrayOnPlane(
-    m_gctx,
-    layerSurfaces,
-    1,                              // bins in direction 1
-    1,                              // bins in direction 2
-    Acts::AxisDirection::AxisY,     // binning direction
-    std::nullopt,                   // no proto layer
-    Acts::Transform3::Identity());  // transform (use identity, surface already positioned)
-    // Layer thickness: use 2 * half-thickness from DD4hep.
-    // Add a small margin to avoid navigation issues.
     const double layerThickness = 2.0 * pi.thickness + 0.01;
 
+    // nullptr SurfaceArray: the layer surface representation itself
+    // is the sensitive surface that the CKF will associate hits with.
     auto layer = Acts::PlaneLayer::create(
         transform,
         bounds,
-        std::move(surfArray),
-        layerThickness);
+        std::unique_ptr<Acts::SurfaceArray>{}, 
+        layerThickness,
+        nullptr,           // no approach descriptor
+        Acts::active);     // mark as active (sensitive)
 
     allLayers.push_back(layer);
   }
@@ -350,10 +298,19 @@ StatusCode ACTSGeoSvc::initialize() {
          << endmsg;
 
   // Populate m_allSurfaces: all rectangle surfaces sorted by X
-  m_trackingGeometry->visitSurfaces([&](const Acts::Surface* sf) {
-    if (sf && sf->bounds().type() == Acts::SurfaceBounds::eRectangle)
-      m_allSurfaces.push_back(sf);
-  });
+  const Acts::TrackingVolume* world = m_trackingGeometry->highestTrackingVolume();
+  if (world && world->confinedLayers()) {
+    for (const auto& layer : world->confinedLayers()->arrayObjects()) {
+      if (layer && layer->layerType() == Acts::active) {
+        m_allSurfaces.push_back(&layer->surfaceRepresentation());
+      }
+    }
+  }
+  // Sort by X
+  std::sort(m_allSurfaces.begin(), m_allSurfaces.end(),
+          [&](const Acts::Surface* a, const Acts::Surface* b) {
+            return a->center(m_gctx).x() < b->center(m_gctx).x();
+          });
   std::sort(m_allSurfaces.begin(), m_allSurfaces.end(),
             [&](const Acts::Surface* a, const Acts::Surface* b) {
               return a->center(m_gctx).x() < b->center(m_gctx).x();
