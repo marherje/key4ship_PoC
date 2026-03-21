@@ -29,11 +29,21 @@ cd ..
 export LD_LIBRARY_PATH=$PWD/install/lib64:$PWD/install/lib:$LD_LIBRARY_PATH
 export PYTHONPATH=$PWD/install/lib64:$PWD/install/lib:$PWD/install/python:$PYTHONPATH
 
-# 4. Run ddsim
-cd run_scripts
-ddsim --steeringFile ddsim_steering.py 
+# Example with 2 muons:
+# 4. Run simulation (ddsim)
+cd simulation/run_script
+source launch_PG.sh
+cd ../..
 
-# 5. Run algorithm/s
-k4run digitize.py 
+# 5. Run gaudi algorithm/s
+cd gaudi_jobs/two_muons_pipeline
+source two_muons_pipeline
+# For ACTS
+k4run job_tracking.py
+
+# For using the event display.
+# In folfer /eventdisplay/ do
+python event_display_eve.py --hits ../gaudi_jobs/two_muons_pipeline/ShipHits.root --window 0 --source-labels "0:mixed" "1:Sig1" "2:Sig2"
+# where window is the "event"
 
 ```

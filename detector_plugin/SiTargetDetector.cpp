@@ -122,13 +122,11 @@ dd4hep::Ref_t create_SiTarget(dd4hep::Detector& description,
           sl_pv = layer_vol.placeVolume(sl_vol,
                     Position(sl_center_x,0.0, 0.0));
         }
-        sl_pv.addPhysVolID("system", det_id);
-        sl_pv.addPhysVolID("layer",  layer_idx);
-        sl_pv.addPhysVolID("slice",  slice_in_layer);
-        if (is_sens)
-          sl_pv.addPhysVolID("plane", plane_id);
 
+        sl_pv.addPhysVolID("slice",  slice_in_layer);
+       
         if (is_sens) {
+          sl_pv.addPhysVolID("plane", plane_id);
           DetElement sl_de(layer_de,
                            "plane_" + std::to_string(plane_id),
                            layer_idx * 10 + plane_id);
