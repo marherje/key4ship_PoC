@@ -14,7 +14,6 @@
 #include "Acts/Geometry/TrackingVolume.hpp"
 #include "Acts/Geometry/TrackingVolumeArrayCreator.hpp"
 #include "Acts/Geometry/CuboidVolumeBounds.hpp"
-#include "Acts/Surfaces/PlaneSurface.hpp"
 #include "Acts/Surfaces/RectangleBounds.hpp"
 #include "Acts/Surfaces/Surface.hpp"
 #include "Acts/Surfaces/SurfaceArray.hpp"
@@ -55,11 +54,11 @@ StatusCode ACTSGeoSvc::initialize() {
   // Struct holding extracted plane info.
   // TGeo positions are in cm; we convert to mm (* 10) immediately.
   struct PlaneInfo {
-    double x;          // global X center [mm]
-    double halfY;      // half-size in Y [mm]
-    double halfZ;      // half-size in Z [mm]
-    double thickness;  // half-thickness in X [mm]
-    int    plane;      // 0=StripY, 1=StripZ, -1=pixel (SiPad)
+    double z;          // global Z center [mm]  // beam axis is now Z
+    double halfX;      // half-size in X [mm]   // transverse
+    double halfY;      // half-size in Y [mm]   // transverse
+    double thickness;  // half-thickness in Z [mm]
+    int    plane;      // 0=StripX, 1=StripY, -1=pixel (SiPad)
   };
 
   // Walk TGeo tree and collect sensitive volumes for the requested detector.
@@ -97,10 +96,10 @@ StatusCode ACTSGeoSvc::initialize() {
           if (box) {
             PlaneInfo pi;
             // TGeo uses cm; convert to mm (* 10)
-            pi.x         = tr[0]        * 10.0;
-            pi.halfY     = box->GetDY() * 10.0;
-            pi.halfZ     = box->GetDZ() * 10.0;
-            pi.thickness = box->GetDX() * 10.0;
+            pi.z         = tr[2]        * 10.0;  // Z translation (beam axis)
+            pi.halfX     = box->GetDX() * 10.0;  // transverse X
+            pi.halfY     = box->GetDY() * 10.0;  // transverse Y
+            pi.thickness = box->GetDZ() * 10.0;  // thickness along Z
 
             if (detName == "SiTarget") {
               if (volName.find("slice_2") != std::string::npos)
@@ -125,7 +124,7 @@ StatusCode ACTSGeoSvc::initialize() {
 
     std::sort(planes.begin(), planes.end(),
               [](const PlaneInfo& a, const PlaneInfo& b) {
-                return a.x < b.x;
+                return a.z < b.z;
               });
     return planes;
   };
@@ -133,15 +132,11 @@ StatusCode ACTSGeoSvc::initialize() {
   // Detector names in X order (SiTarget more negative, SiPad less negative)
   const std::vector<std::string> detNames = {"SiTarget", "SiPad"};
 
-  Acts::RotationMatrix3 rotIdentity = Acts::RotationMatrix3::Identity();
-  Acts::RotationMatrix3 rotStripZ;
-  rotStripZ = Eigen::AngleAxisd(M_PI / 2.0, Acts::Vector3::UnitX());
-
   // Collect ALL planes from ALL detectors into a single flat list.
   // This avoids CuboidVolumeBuilder multi-volume offset bugs.
   std::vector<PlaneInfo> allPlanes;
+  double globalHalfX = 0.0;
   double globalHalfY = 0.0;
-  double globalHalfZ = 0.0;
 
   for (const std::string& detName : detNames) {
     auto planes = extractPlanes(detName);
@@ -155,13 +150,13 @@ StatusCode ACTSGeoSvc::initialize() {
            << ": found " << planes.size() << " sensitive planes." << endmsg;
 
     for (const auto& pi : planes) {
-      info() << "[ACTSGeoSvc]   plane x=" << pi.x
-             << " halfY=" << pi.halfY << " halfZ=" << pi.halfZ
+      info() << "[ACTSGeoSvc]   plane z=" << pi.z
+             << " halfX=" << pi.halfX << " halfY=" << pi.halfY
              << " thickness=" << pi.thickness
              << " plane=" << pi.plane << endmsg;
       // Track largest detector half-sizes for volume bounds
+      globalHalfX = std::max(globalHalfX, pi.halfX);
       globalHalfY = std::max(globalHalfY, pi.halfY);
-      globalHalfZ = std::max(globalHalfZ, pi.halfZ);
       allPlanes.push_back(pi);
     }
   }
@@ -169,7 +164,7 @@ StatusCode ACTSGeoSvc::initialize() {
   // Sort all planes by X (should already be sorted since SiTarget < SiPad in X)
   std::sort(allPlanes.begin(), allPlanes.end(),
             [](const PlaneInfo& a, const PlaneInfo& b) {
-              return a.x < b.x;
+              return a.z < b.z;
             });
 
   // =========================================================================
@@ -185,28 +180,38 @@ StatusCode ACTSGeoSvc::initialize() {
   std::vector<Acts::LayerPtr> allLayers;
   allLayers.reserve(allPlanes.size());
 
+  // Rotation 90° around Y: maps local Z (surface normal) to global X.
+  // This avoids the theta=0 singularity in ACTS bound coordinates
+  // when the beam (and track direction) is along global Z.
+  // After this rotation, the surface normal points in X, and
+  // seedDir=(1,0,0) gives theta=π/2 — far from the coordinate singularity.
+  Acts::RotationMatrix3 rot90Y =
+      Eigen::AngleAxisd(M_PI / 2.0,
+                        Acts::Vector3::UnitY()).toRotationMatrix();
+
   for (std::size_t i = 0; i < allPlanes.size(); ++i) {
     const auto& pi = allPlanes[i];
-    Acts::RotationMatrix3 rot = (pi.plane == 1) ? rotStripZ : rotIdentity;
 
     Acts::Transform3 transform = Acts::Transform3::Identity();
-    transform.rotate(rot);
-    transform.pretranslate(Acts::Vector3(pi.x, 0.0, 0.0));
+    // First rotate so surface normal points in X (avoids theta=0 singularity)
+    transform.rotate(rot90Y);
+    // Swap Z→X: beam coordinate goes into X for ACTS internal convention.
+    // Surface normal already points in X (from rot90Y). Center at (z, 0, 0).
+    transform.pretranslate(Acts::Vector3(pi.z, 0.0, 0.0));
 
+    // Bounds in the local XY plane (transverse to beam)
     auto bounds = std::make_shared<Acts::RectangleBounds>(
-        pi.halfY, pi.halfZ);
+        pi.halfX, pi.halfY);
 
     const double layerThickness = 2.0 * pi.thickness + 0.01;
 
-    // nullptr SurfaceArray: the layer surface representation itself
-    // is the sensitive surface that the CKF will associate hits with.
     auto layer = Acts::PlaneLayer::create(
         transform,
         bounds,
-        std::unique_ptr<Acts::SurfaceArray>{}, 
+        std::unique_ptr<Acts::SurfaceArray>{},
         layerThickness,
-        nullptr,           // no approach descriptor
-        Acts::active);     // mark as active (sensitive)
+        nullptr,
+        Acts::active);
 
     allLayers.push_back(layer);
   }
@@ -215,27 +220,29 @@ StatusCode ACTSGeoSvc::initialize() {
   // ACTS requires NavigationLayer objects at the volume boundaries for
   // correct extrapolation. Create one at xMin and one at xMax.
 
-  const double xMin = allPlanes.front().x - allPlanes.front().thickness - 5.0;
-  const double xMax = allPlanes.back().x  + allPlanes.back().thickness  + 5.0;
+  const double zMin = allPlanes.front().z - allPlanes.front().thickness - 5.0;
+  const double zMax = allPlanes.back().z  + allPlanes.back().thickness  + 5.0;
 
-  // Navigation layer at xMin
+  // Navigation layer at zMin
   {
     Acts::Transform3 t = Acts::Transform3::Identity();
-    t.pretranslate(Acts::Vector3(xMin, 0.0, 0.0));
+    t.rotate(rot90Y);
+    t.pretranslate(Acts::Vector3(zMin, 0.0, 0.0));
     auto navBounds = std::make_shared<Acts::RectangleBounds>(
-        globalHalfY + 5.0, globalHalfZ + 5.0);
+        globalHalfX + 5.0, globalHalfY + 5.0);
     auto navLayer = Acts::PlaneLayer::create(t, navBounds, nullptr, 0.0,
                                              nullptr,
                                              Acts::navigation);
     allLayers.insert(allLayers.begin(), navLayer);
   }
 
-  // Navigation layer at xMax
+  // Navigation layer at zMax
   {
     Acts::Transform3 t = Acts::Transform3::Identity();
-    t.pretranslate(Acts::Vector3(xMax, 0.0, 0.0));
+    t.rotate(rot90Y);
+    t.pretranslate(Acts::Vector3(zMax, 0.0, 0.0));
     auto navBounds = std::make_shared<Acts::RectangleBounds>(
-        globalHalfY + 5.0, globalHalfZ + 5.0);
+        globalHalfX + 5.0, globalHalfY + 5.0);
     auto navLayer = Acts::PlaneLayer::create(t, navBounds, nullptr, 0.0,
                                              nullptr,
                                              Acts::navigation);
@@ -253,18 +260,19 @@ StatusCode ACTSGeoSvc::initialize() {
   auto layerArray = lac.layerArray(
       m_gctx,
       allLayers,
-      xMin - 1.0,
-      xMax + 1.0,
+      zMin - 1.0,
+      zMax + 1.0,
       Acts::arbitrary,          // use arbitrary binning (respects actual positions)
       Acts::AxisDirection::AxisX);
 
   // ---- Step 5: Build TrackingVolume with CuboidVolumeBounds ---------------
   // The volume must fully contain all layers.
   // halfX must be > abs(xMin) and > abs(xMax) since volume is centered at 0.
+  // Beware of the rotation X<->Z: beam axis is now X, so we use zMin/zMax for volume halfX.
 
-  const double volumeHalfX = std::max(std::abs(xMin), std::abs(xMax)) + 2.0;
+  const double volumeHalfZ = globalHalfX + 15.0;
   const double volumeHalfY = globalHalfY + 15.0;
-  const double volumeHalfZ = globalHalfZ + 15.0;
+  const double volumeHalfX = std::max(std::abs(zMin), std::abs(zMax)) + 2.0;
 
   auto volumeBounds = std::make_shared<Acts::CuboidVolumeBounds>(
       volumeHalfX, volumeHalfY, volumeHalfZ);
@@ -297,8 +305,11 @@ StatusCode ACTSGeoSvc::initialize() {
   info() << "[ACTSGeoSvc] TrackingGeometry built with PlaneLayer."
          << endmsg;
 
-  // Populate m_allSurfaces: all rectangle surfaces sorted by X
-  const Acts::TrackingVolume* world = m_trackingGeometry->highestTrackingVolume();
+  // Collect sensitive surfaces from confined layers.
+  // With nullptr SurfaceArray, the layer's surfaceRepresentation() IS
+  // the sensitive surface that the Navigator will visit.
+  const Acts::TrackingVolume* world =
+      m_trackingGeometry->highestTrackingVolume();
   if (world && world->confinedLayers()) {
     for (const auto& layer : world->confinedLayers()->arrayObjects()) {
       if (layer && layer->layerType() == Acts::active) {
@@ -306,11 +317,6 @@ StatusCode ACTSGeoSvc::initialize() {
       }
     }
   }
-  // Sort by X
-  std::sort(m_allSurfaces.begin(), m_allSurfaces.end(),
-          [&](const Acts::Surface* a, const Acts::Surface* b) {
-            return a->center(m_gctx).x() < b->center(m_gctx).x();
-          });
   std::sort(m_allSurfaces.begin(), m_allSurfaces.end(),
             [&](const Acts::Surface* a, const Acts::Surface* b) {
               return a->center(m_gctx).x() < b->center(m_gctx).x();

@@ -182,10 +182,10 @@ StatusCode SiTargetMeasConverter::execute(const EventContext&) const {
       // edm4hep stores positions in mm
       const auto& pos = hit.getPosition();
 
-      // Local measurement coordinate:
-      //   plane=0 (StripY): strips parallel to Z, measures Y
-      //   plane=1 (StripZ): strips parallel to Y, measures Z
-      // Stored in covMatrix(0,0) as variance; localCoord implicit in position.
+      // Local measurement coordinate (Z=beam convention):
+      //   plane=0 (StripX): strips parallel to Y, measures X
+      //   plane=1 (StripY): strips parallel to X, measures Y
+      // Stored in covMatrix as variance; localCoord implicit in position.
 
       // Get hit time: use time of first contribution if available
       float hitTime = 0.0f;
@@ -197,13 +197,15 @@ StatusCode SiTargetMeasConverter::execute(const EventContext&) const {
       // coordinate carries the strip variance.
       // The matrix is symmetric 3x3 stored as upper triangle:
       // [xx, xy, xz, yy, yz, zz] — 6 elements.
-      //   plane=0 → yy = variance (position.y is the measurement)
-      //   plane=1 → zz = variance (position.z is the measurement)
+      //   plane=0 → xx = variance (position.x is the measurement)
+      //   plane=1 → yy = variance (position.y is the measurement)
       edm4hep::CovMatrix3f cov{};  // zero-initialized
+      // Z=beam: plane=0 (StripX) measures X → xx=cov[0]
+      //         plane=1 (StripY) measures Y → yy=cov[3]
       if (plane == 0) {
-        cov[3] = static_cast<float>(variance);  // yy element
+        cov[0] = static_cast<float>(variance);  // xx element
       } else {
-        cov[5] = static_cast<float>(variance);  // zz element
+        cov[3] = static_cast<float>(variance);  // yy element
       }
 
       // Create TrackerHit3D

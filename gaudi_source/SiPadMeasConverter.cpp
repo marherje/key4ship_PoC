@@ -52,15 +52,15 @@ private:
       "Output TrackerHit3DCollection name"};
 
   Gaudi::Property<std::string> m_bitField{
-      this, "BitField", "system:8,layer:8,slice:4,y:9,z:9",
+      this, "BitField", "system:8,layer:8,slice:4,x:9,y:9",
       "DD4hep BitField string for SiPad cellID decoding"};
 
+  Gaudi::Property<double> m_pixelSizeX{
+      this, "PixelSizeX", 5.5,
+      "Pixel size in X direction [mm] — used to compute measurement variance"};
   Gaudi::Property<double> m_pixelSizeY{
       this, "PixelSizeY", 5.5,
       "Pixel size in Y direction [mm] — used to compute measurement variance"};
-  Gaudi::Property<double> m_pixelSizeZ{
-      this, "PixelSizeZ", 5.5,
-      "Pixel size in Z direction [mm] — used to compute measurement variance"};
 
   // ---- DataHandles ----
   mutable std::unique_ptr<
@@ -148,14 +148,17 @@ StatusCode SiPadMeasConverter::execute(const EventContext&) const {
     const std::size_t sipadOffset = 20;  // number of SiTarget surfaces
 
     // Precompute pixel variances
+    // Z=beam: SiPad measures X and Y (transverse to beam)
+    // Pixel sizes map: PixelSizeY→X direction, PixelSizeZ→Y direction
+    // (names kept for backward compatibility with steering files)
+    const double varX = (m_pixelSizeX.value() * m_pixelSizeX.value()) / 12.0;
     const double varY = (m_pixelSizeY.value() * m_pixelSizeY.value()) / 12.0;
-    const double varZ = (m_pixelSizeZ.value() * m_pixelSizeZ.value()) / 12.0;
 
-    // Build CovMatrix3f: yy and zz diagonal elements
+    // Build CovMatrix3f: xx and yy diagonal elements
     // Upper triangle storage: [xx=0, xy=1, xz=2, yy=3, yz=4, zz=5]
     edm4hep::CovMatrix3f cov{};
+    cov[0] = static_cast<float>(varX);  // xx
     cov[3] = static_cast<float>(varY);  // yy
-    cov[5] = static_cast<float>(varZ);  // zz
     // Same covariance for all SiPad hits — computed once outside the loop
 
     std::size_t nConverted = 0;

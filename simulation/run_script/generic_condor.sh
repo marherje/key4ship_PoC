@@ -40,7 +40,7 @@ import os
 from DDSim.DD4hepSimulation import DD4hepSimulation
 from g4units import mm, GeV
 
-gun_direction = (1, 0, 0)
+gun_direction = (0, 0, 1)  # Along Z-axis
 gun_position = (${pos_x} * mm, ${pos_y} * mm, ${pos_z} * mm)
 
 compact_path = os.path.abspath("${geometry_folder}/SND_compact.xml")

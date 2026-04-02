@@ -7,7 +7,7 @@ desc.fromXML("../simulation/geometry/SND_compact.xml")
 
 mgr = ROOT.gGeoManager
 
-z_lists = {"SiPad": [], "SiTarget_Y": [], "SiTarget_Z": []}
+z_lists = {"SiPad": [], "SiTarget_X": [], "SiTarget_Y": []}
 
 def walk(node, path=""):
     vol = node.GetVolume()
@@ -15,44 +15,44 @@ def walk(node, path=""):
     current_path = path + "/" + node.GetName()
     shape = vol.GetShape()
 
-    is_sens = False
-    detector = None
-    if "SiTarget" in current_path and "slice_2" in name:
-        is_sens = True; detector = "SiTarget_Y"
-    elif "SiTarget" in current_path and "slice_4" in name:
-        is_sens = True; detector = "SiTarget_Z"
-    elif "SiPad" in current_path and "_slice_4" in name:
-        is_sens = True; detector = "SiPad"
-
-    if is_sens:
+    # --- Only look at slices ---
+    if "_slice_" in name:
         ok = mgr.cd(current_path)
         if ok:
             t = mgr.GetCurrentMatrix().GetTranslation()
-            s = shape
-            if detector == "SiPad":
-                print(f"{detector:<12} {name:<45} "
-                      f"x={t[0]:8.2f}  "
-                      f"half_yz=({s.GetDY():.1f},{s.GetDZ():.1f})  "
-                      f"half_x={s.GetDX():.2f} cm")
-                z_lists[detector].append(round(t[0], 2))
-            else:
-                print(f"{detector:<12} {name:<45} "
-                      f"z={t[2]:8.2f}  "
-                      f"half_xy=({s.GetDX():.1f},{s.GetDY():.1f})  "
-                      f"half_z={s.GetDZ():.2f} cm")
-                z_lists[detector].append(round(t[2], 2))
 
+            # --- SiPad: only slice_4 ---
+            if "SiPad" in current_path and "_slice_4" in name:
+                print(f"{'SiPad':<12} {name:<45} x={t[2]:8.2f}")
+                z_lists["SiPad"].append(round(t[2], 2))
+
+            # --- SiTarget: slice_2 (Y) and slice_4 (Z) ---
+            elif "SiTarget" in current_path:
+                if "_slice_2" in name:
+                    print(f"{'SiTarget_X':<12} {name:<45} x={t[2]:8.2f}")
+                    z_lists["SiTarget_X"].append(round(t[2], 2))
+
+                elif "_slice_4" in name:
+                    print(f"{'SiTarget_Y':<12} {name:<45} x={t[2]:8.2f}")
+                    z_lists["SiTarget_Y"].append(round(t[2], 2))
+
+    # --- Recurse ---
     for i in range(node.GetNdaughters()):
         walk(node.GetDaughter(i), current_path)
 
 walk(mgr.GetTopNode())
 
 print()
-var_names = {"SiPad": "SIPAD_X", "SiTarget_Y": "SITARGET_X_Y", "SiTarget_Z": "SITARGET_X_Z"}
+
+var_names = {
+    "SiPad": "SIPAD_Z",
+    "SiTarget_X": "SITARGET_X_Z",
+    "SiTarget_Y": "SITARGET_Y_Z"
+}
+
 for det, zs in z_lists.items():
-    vals = ", ".join(f"{z:.2f}" for z in zs)
-    # wrap at ~60 chars
     entries = [f"{z:.2f}" for z in zs]
+
     lines, line = [], []
     for e in entries:
         line.append(e)
@@ -61,6 +61,7 @@ for det, zs in z_lists.items():
             line = [line[-1]]
     if line:
         lines.append("    " + ", ".join(line) + ",")
+
     print(f"{var_names[det]} = [")
     print("\n".join(lines))
     print("]")
