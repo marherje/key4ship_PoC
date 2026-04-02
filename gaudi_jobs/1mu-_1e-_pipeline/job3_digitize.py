@@ -10,7 +10,7 @@ if not infile:
     import sys; sys.exit(1)
 
 # Generate output file name based on input file name
-outfile = "shuffled_digitized.edm4hep.root"
+outfile = "digitized.edm4hep.root"
 
 # IOSvc
 iosvc = IOSvc()

@@ -1,14 +1,14 @@
 <detector name="SiTarget" type="SiTargetDetector" vis="EcalVis" id="2"
               readout="SiTargetHits">
 
-  <dimensions y="SiTarget_env_width" z="SiTarget_env_height"/>
+  <dimensions x="SiTarget_env_width" y="SiTarget_env_height"/>
 
   <type_flags type="DetType_TRACKER + DetType_BARREL + DetType_STRIP"/>
 
   <parameters
         env_width="SiTarget_env_width"
         env_height="SiTarget_env_height"
-        x_position="SiTarget_x_position"
+        z_position="SiTarget_z_position"
   />
 
   <layer repeat="SiTarget_NLayers">
@@ -22,7 +22,7 @@
         <slice material="Silicon" thickness="SiTarget_sensor_thickness"
                sensitive="true" plane="0" vis="SiVis"/>
         <!-- Air gap between the two Si planes -->
-        <slice material="Air" thickness="SiTarget_YZ_plane_gap"
+        <slice material="Air" thickness="SiTarget_XY_plane_gap"
                sensitive="false" vis="AirVis"/>
         <!-- Y plane: measures Y coordinate, rotated 90 degrees around Z by the plugin -->
         <slice material="Silicon" thickness="SiTarget_sensor_thickness"
