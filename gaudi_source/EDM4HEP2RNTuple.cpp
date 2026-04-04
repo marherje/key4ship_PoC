@@ -2,6 +2,7 @@
 #include "GaudiKernel/MsgStream.h"
 #include "k4FWCore/DataHandle.h"
 #include "edm4hep/SimCalorimeterHitCollection.h"
+#include "edm4hep/TrackCollection.h"
 #include "DD4hep/BitFieldCoder.h"
 #include "podio/ROOTReader.h"
 #include "podio/Frame.h"
@@ -166,6 +167,65 @@ public:
                << endmsg;
       }
 
+      // ---- Track RNTuple setup (optional) ----------------------------------
+      if (!m_trackFile.value().empty()) {
+        try {
+          // Open track file with direct podio reader (bypass Gaudi DataHandle)
+          m_trackReader = std::make_unique<podio::ROOTReader>();
+          m_trackReader->openFile(m_trackFile.value());
+          m_nTrackEvents = m_trackReader->getEntries("events");
+
+          // Validate event count matches hit file
+          const std::size_t nHitEvents =
+              static_cast<std::size_t>(m_reader->getEntries("events"));
+          if (m_nTrackEvents != nHitEvents) {
+            error() << "[EDM4HEP2RNTuple] Track file '"
+                    << m_trackFile.value() << "' has "
+                    << m_nTrackEvents << " event(s) but hit file '"
+                    << m_inputFile.value() << "' has " << nHitEvents
+                    << " event(s). Both must have the same number of events."
+                    << endmsg;
+            return StatusCode::FAILURE;
+          }
+
+          // Build minimal track RNTuple: one row per track
+          auto model = ROOT::RNTupleModel::Create();
+
+          auto fWindowID = model->MakeField<int>("window_id");
+          auto fTrackID  = model->MakeField<int>("track_id");
+          auto fChi2     = model->MakeField<float>("chi2");
+          auto fNdf      = model->MakeField<int>("ndf");
+          auto fSeedX    = model->MakeField<float>("seed_x");  // DD4hep transverse X [mm]
+          auto fSeedY    = model->MakeField<float>("seed_y");  // DD4hep transverse Y [mm]
+
+          m_fTrackWindowID = fWindowID.get();
+          m_fTrackID       = fTrackID.get();
+          m_fTrackChi2     = fChi2.get();
+          m_fTrackNdf      = fNdf.get();
+          m_fTrackSeedX    = fSeedX.get();
+          m_fTrackSeedY    = fSeedY.get();
+
+          m_trackIntPtrs.push_back(std::move(fWindowID));
+          m_trackIntPtrs.push_back(std::move(fTrackID));
+          m_trackIntPtrs.push_back(std::move(fNdf));
+          m_trackFloatPtrs.push_back(std::move(fChi2));
+          m_trackFloatPtrs.push_back(std::move(fSeedX));
+          m_trackFloatPtrs.push_back(std::move(fSeedY));
+
+          m_trackWriter = ROOT::RNTupleWriter::Append(
+            std::move(model), m_trackCollectionName.value(), *m_outputTFile);
+
+          info() << "[EDM4HEP2RNTuple] Track export enabled: '"
+                 << m_trackFile.value() << "' ("
+                 << m_nTrackEvents << " events)" << endmsg;
+
+        } catch (const std::exception& e) {
+          error() << "[EDM4HEP2RNTuple] Cannot open track file '"
+                  << m_trackFile.value() << "': " << e.what() << endmsg;
+          return StatusCode::FAILURE;
+        }
+      }
+
       info() << "[EDM4HEP2RNTuple] Initialized."
              << "  Output: " << m_outputFile.value()
              << "  Detectors: " << colls.size() << endmsg;
@@ -251,6 +311,45 @@ public:
         }
       }
 
+      // ---- Export tracks if enabled ----------------------------------------
+      if (m_trackWriter && m_trackReader &&
+          static_cast<std::size_t>(windowID) < m_nTrackEvents) {
+        try {
+          auto entry  = m_trackReader->readEntry("events",
+                            static_cast<std::size_t>(windowID));
+          auto tframe = podio::Frame(std::move(entry));
+          const auto& tracks = tframe.get<edm4hep::TrackCollection>(m_trackCollectionName.value());
+
+          for (int iTrack = 0; iTrack < static_cast<int>(tracks.size()); ++iTrack) {
+            const auto& track  = tracks[iTrack];
+            const auto& states = track.getTrackStates();
+
+            // Seed position stored in first TrackState (location=AtIP)
+            // D0 = seed transverse X [mm], Z0 = seed transverse Y [mm]
+            float seedX = 0.0f, seedY = 0.0f;
+            for (const auto& ts : states) {
+              if (ts.location == edm4hep::TrackState::AtIP) {
+                seedX = ts.D0;
+                seedY = ts.Z0;
+                break;
+              }
+            }
+
+            *m_fTrackWindowID = static_cast<int>(windowID);
+            *m_fTrackID       = iTrack;
+            *m_fTrackChi2     = track.getChi2();
+            *m_fTrackNdf      = track.getNdf();
+            *m_fTrackSeedX    = seedX;
+            *m_fTrackSeedY    = seedY;
+            m_trackWriter->Fill();
+          }
+        } catch (const std::exception& e) {
+          warning() << "[EDM4HEP2RNTuple] Could not read tracks for window "
+                    << windowID << ": " << e.what()
+                    << " — skipping." << endmsg;
+        }
+      }
+
       return StatusCode::SUCCESS;
     } catch (const std::exception& e) {
       error() << "[EDM4HEP2RNTuple] Exception in execute(): " << e.what() << endmsg;
@@ -263,6 +362,11 @@ public:
 
   StatusCode finalize() override {
     try {
+      if (m_trackWriter) { m_trackWriter.reset(); }
+      m_trackReader.reset();
+      m_trackIntPtrs.clear();
+      m_trackFloatPtrs.clear();
+
       for (auto& w : m_writers) w.reset();  // flush all writers before closing file
       m_writers.clear();
       m_detFields.clear();
@@ -312,6 +416,19 @@ private:
       this, "OutputFile", "ShipHits.root",
       "Output ROOT file containing all per-detector RNTuples"};
 
+  // Path to the tracks.root file produced by ACTSProtoTracker.
+  // If empty, track export is disabled.
+  // The file must contain the same number of events as the hit input file.
+  Gaudi::Property<std::string> m_trackFile{
+      this, "TrackFile", "",
+      "Path to tracks.root file from ACTSProtoTracker. "
+      "Must have same number of events as hit input. "
+      "Leave empty to skip track export."};
+
+  Gaudi::Property<std::string> m_trackCollectionName{
+    this, "TrackCollectionName", "ACTSTracks",
+    "Name of the track collection inside TrackFile."};
+
   // One DataHandle per collection, built in initialize() from m_collections.
   mutable std::vector<
       std::unique_ptr<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>
@@ -352,6 +469,22 @@ private:
     std::vector<std::shared_ptr<int>>  fieldSharedPtrs;
   };
   mutable std::vector<DetectorFields> m_detFields;
+
+  // Direct podio reader for track file (bypasses Gaudi DataHandle)
+  mutable std::unique_ptr<podio::ROOTReader> m_trackReader;
+  mutable std::size_t                        m_nTrackEvents{0};
+
+  // Track RNTuple field pointers (flat, no nested structs)
+  mutable std::unique_ptr<ROOT::RNTupleWriter> m_trackWriter;
+  mutable int*   m_fTrackWindowID = nullptr;
+  mutable int*   m_fTrackID       = nullptr;
+  mutable float* m_fTrackChi2     = nullptr;
+  mutable int*   m_fTrackNdf      = nullptr;
+  mutable float* m_fTrackSeedX    = nullptr;
+  mutable float* m_fTrackSeedY    = nullptr;
+  // Keep shared_ptrs alive after model is moved into writer
+  mutable std::vector<std::shared_ptr<int>>   m_trackIntPtrs;
+  mutable std::vector<std::shared_ptr<float>> m_trackFloatPtrs;
 
   // Window counter: incremented in each execute() call.
   mutable std::atomic<long long> m_windowCount{0};
