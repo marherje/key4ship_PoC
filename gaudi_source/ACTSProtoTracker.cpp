@@ -200,6 +200,11 @@ private:
       this, "SeedStripPitch", 0.0755,
       "Strip pitch [mm] used for most-frequent-strip seed refinement."};
 
+  Gaudi::Property<double> m_maxChi2PerMeas{
+    this, "MaxChi2PerMeas", 500.0,
+    "Maximum chi2/nMeas threshold for track acceptance. "
+    "Tracks above this threshold are rejected as false seeds."};
+      
   // ---- Hough-based auto-seeding -------------------------------------------
   struct SeedCandidate {
     double x;          // transverse X [mm] (DD4hep convention)
@@ -754,15 +759,15 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
       }
 
       if (evtNum < 3) {
-        info() << "[ACTSProtoTracker] evt=" << evtNum
-               << " Hough seeding: " << autoSeeds.size()
-               << " seed(s) found" << endmsg;
+        debug() << "[ACTSProtoTracker] evt=" << evtNum
+                << " Hough seeding: " << autoSeeds.size()
+                << " seed(s) found" << endmsg;
         for (std::size_t si = 0; si < autoSeeds.size(); ++si) {
-          info() << "[ACTSProtoTracker]   seed " << si
-                 << ": x=" << autoSeeds[si].x
-                 << " y=" << autoSeeds[si].y
-                 << " z_start=" << autoSeeds[si].z_start
-                 << " votes=" << autoSeeds[si].nVotes << endmsg;
+          debug() << "[ACTSProtoTracker]   seed " << si
+                  << ": x=" << autoSeeds[si].x
+                  << " y=" << autoSeeds[si].y
+                  << " z_start=" << autoSeeds[si].z_start
+                  << " votes=" << autoSeeds[si].nVotes << endmsg;
         }
       }
 
@@ -913,25 +918,6 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
                          mb.surface->center(gctx).x();
                 });
 
-      // Diagnostic: print selected hits for seed=1 in first event.
-      // Shows which hits the seed-dependent selection chose.
-      // Remove after verifying hit selection works correctly.
-      if (evtNum == 0 && iSeed == 1) {
-        int printCount = 0;
-        info() << "[ACTSProtoTracker] evt=0 seed=1 selected hits (first 8):"
-               << endmsg;
-        for (const auto& [gid, idx] : bestHitPerSurface) {
-          const auto& m = measurements[idx];
-          info() << "[ACTSProtoTracker]   hit idx=" << idx
-                 << " plane=" << m.plane
-                 << " lc=" << m.localCoord
-                 << " lc2=" << m.localCoord2
-                 << " is2D=" << m.is2D
-                 << endmsg;
-          if (++printCount >= 8) break;
-        }
-      }
-
       // ---- Create seed parameters -------------------------------------------
       auto seedParamsResult = Acts::BoundTrackParameters::create(
           gctx, sfSeed->getSharedPtr(), seedPos4, seedDir, seedQoverP,
@@ -945,22 +931,6 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
         continue;
       }
       const auto& seedParams = *seedParamsResult;
-
-      // DEBUG:
-      info() << "[ACTSProtoTracker] evt=" << evtNum
-       << " seed=" << iSeed
-       << " seedPos=(" << seedPos4[0] << "," << seedPos4[1] << "," << seedPos4[2] << ")"
-       << " seedDir=(" << seedDir[0] << "," << seedDir[1] << "," << seedDir[2] << ")"
-       << " result.ok()=" << seedParamsResult.ok()
-       << endmsg;
-      if (seedParamsResult.ok()) {
-        const auto& p = *seedParamsResult;
-        info() << "[ACTSProtoTracker]   bound params: loc0=" << p.parameters()[Acts::eBoundLoc0]
-         << " loc1=" << p.parameters()[Acts::eBoundLoc1]
-         << " phi=" << p.parameters()[Acts::eBoundPhi]
-         << " theta=" << p.parameters()[Acts::eBoundTheta]
-         << endmsg;
-      }
 
       // ---- KF options -------------------------------------------------------
       Acts::PropagatorPlainOptions pOptions(gctx, m_mctx);
@@ -1045,7 +1015,7 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
         if (isDuplicate) continue;  // skip to next seed
 
         const double chi2PerMeas = kfTrack.chi2() / std::max(1.0, (double)nMeas);
-        if (chi2PerMeas > 500.0) {
+        if (chi2PerMeas > m_maxChi2PerMeas.value()) {
           debug() << "[ACTSProtoTracker] evt=" << evtNum
           << " seed=" << iSeed
           << " rejected: chi2/nMeas=" << chi2PerMeas << endmsg;
@@ -1060,6 +1030,18 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
         track.setType(1);
         track.setChi2(static_cast<float>(kfTrack.chi2()));
         track.setNdf(static_cast<int>(kfTrack.nDoF()));
+
+        // Store seed transverse position as the first TrackState (location=AtIP).
+        // D0 = seed transverse X [mm] (DD4hep convention)
+        // Z0 = seed transverse Y [mm] (DD4hep convention)
+        // This allows the event display to reconstruct per-track hit assignment.
+        {
+          edm4hep::TrackState seedState{};
+          seedState.location = edm4hep::TrackState::AtIP;
+          seedState.D0       = static_cast<float>(dd_x);
+          seedState.Z0       = static_cast<float>(dd_y);
+          track.addToTrackStates(seedState);
+        }
 
         try {
           auto tipIdx = kfTrack.tipIndex();
@@ -1099,22 +1081,6 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
                     << " trackStates iteration failed: " << e.what() << endmsg;
         }
         ++nTracks;
-      
-        // DEBUG:
-        if (evtNum == 0 && iSeed == 1) {
-          // Print first 5 selected hits for seed=1
-          int count = 0;
-          for (const auto& [gid, idx] : bestHitPerSurface) {
-            const auto& m = measurements[idx];
-            info() << "[ACTSProtoTracker] seed=1 selected hit: "
-           << "plane=" << m.plane
-           << " lc=" << m.localCoord
-           << " lc2=" << m.localCoord2
-           << " is2D=" << m.is2D
-           << endmsg;
-            if (++count >= 5) break;
-          }
-        }
 
       }
 

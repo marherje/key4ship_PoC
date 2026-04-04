@@ -5,7 +5,7 @@ from Gaudi.Configuration import DEBUG, INFO
 
 iosvc = IOSvc()
 iosvc.Input  = "timewindows.edm4hep.root"
-iosvc.Output = "tracks.root"
+iosvc.Output = "tracks.edm4hep.root"
 
 geosvc = ACTSGeoSvc("ACTSGeoSvc")
 geosvc.CompactFile = "../../simulation/geometry/SND_compact.xml"
@@ -45,6 +45,7 @@ proto.HoughMinVotes    = 3      # crossings: each station contributes 1 crossing
 proto.SeedCompatRadius = 8.0    # mm — radius for centroid refinement
 proto.SeedStripPitch   = 0.0755 # mm — SiTarget strip pitch
 proto.SeedMomentum     = 10.0   # GeV
+proto.MaxChi2PerMeas   = 500.0
 # Disable manual seeding (AutoSeed=True overrides these)
 # proto.SeedPositions  = [...]
 # proto.SeedDirections = [...]
@@ -52,7 +53,7 @@ proto.OutputLevel      = DEBUG
 
 ApplicationMgr(
     EvtSel  = "NONE",
-    EvtMax  = 10,
+    EvtMax  = -1,
     TopAlg  = [sitarget_conv, sipad_conv, proto],
     ExtSvc  = [iosvc, geosvc]
 )
