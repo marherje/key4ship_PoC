@@ -117,7 +117,14 @@ public:
         }
 
         // Process all events (readEntry uses absolute index, so re-reading from 0 is fine)
-        for (size_t ev = 0; ev < nEvents; ++ev) {
+        const size_t maxEv = (m_maxEventsPerSource.value() > 0)
+                             ? std::min(nEvents, static_cast<size_t>(m_maxEventsPerSource.value()))
+                             : nEvents;
+        if (maxEv < nEvents) {
+          info() << "[EventShuffler] source_id=" << sourceID
+                 << ": limiting to " << maxEv << " of " << nEvents << " events." << endmsg;
+        }
+        for (size_t ev = 0; ev < maxEv; ++ev) {
           auto frame = podio::Frame(reader.readEntry("events", ev));
 
           const auto& hitsTarget =
@@ -280,6 +287,9 @@ private:
       this, "OutputCollectionSiTarget", "SiTargetHitsMerged", "Output SiTarget collection name"};
   Gaudi::Property<std::string> m_outputCollSiPad{
       this, "OutputCollectionSiPad", "SiPadHitsMerged", "Output SiPad collection name"};
+  Gaudi::Property<int> m_maxEventsPerSource{
+      this, "MaxEventsPerSource", 0,
+      "Maximum number of events to read from each source (0 = no limit)"};
 
   mutable std::map<uint64_t, std::vector<ContribData>> m_bufferSiTarget;
   mutable std::map<uint64_t, std::vector<ContribData>> m_bufferSiPad;
