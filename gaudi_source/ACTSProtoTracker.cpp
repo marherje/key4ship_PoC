@@ -204,13 +204,46 @@ private:
     this, "MaxChi2PerMeas", 500.0,
     "Maximum chi2/nMeas threshold for track acceptance. "
     "Tracks above this threshold are rejected as false seeds."};
+
+  // Track/shower classification: maximum crossing multiplicity per station.
+  // For each Hough peak, multiplicity = nCompatCrossings / nCompatStations.
+  //   Track:  1 StripX x 1 StripY per station → multiplicity ≈ 1-4
+  //   Shower: many strips per station          → multiplicity ≈ 100+
+  // Set to 1e9 to disable (default: disabled).
+  // Tune by running with OutputLevel=DEBUG and observing "multiplicity=" values.
+  Gaudi::Property<double> m_houghMaxMultiplicity{
+      this, "HoughMaxMultiplicity", 1e9,
+      "Maximum crossing multiplicity per station for a Hough peak to be "
+      "considered a track candidate. Peaks above this are classified as "
+      "showers and skipped. Set to 1e9 to disable (default: disabled)." };
+
+  // Strip isolation filter: window size [mm] for counting strip neighbors.
+  // A strip is considered isolated if fewer than IsolationMaxNeighbors
+  // other strips of the same type (StripX or StripY) fall within this
+  // window in the same station. Set to 0.0 to disable (default: disabled).
+  Gaudi::Property<double> m_isolationWindow{
+      this, "IsolationWindow", 0.0,
+      "2D distance [mm] for crossing isolation filter. A crossing is kept "
+      "only if fewer than IsolationMaxNeighbors OTHER crossings in the same "
+      "station fall within this 2D distance. Set to 0.0 to disable."};
+
+  // Maximum number of crossing neighbors within IsolationWindow to be
+  // considered isolated (track-like).
+  // Muon:  0 neighbors (exactly 1 crossing per station) → passes filter
+  // Shower: hundreds of neighbors → fails filter → discarded
+  Gaudi::Property<int> m_isolationMaxNeighbors{
+      this, "IsolationMaxNeighbors", 2,
+      "Maximum number of crossing neighbors within IsolationWindow for a "
+      "crossing to be considered isolated (track-like). "
+      "Muon: 0 neighbors. Shower: hundreds of neighbors."};
       
   // ---- Hough-based auto-seeding -------------------------------------------
   struct SeedCandidate {
-    double x;          // transverse X [mm] (DD4hep convention)
-    double y;          // transverse Y [mm]
-    double z_start;    // beam Z of first compatible layer [mm]
-    int    nVotes;     // number of hits supporting this seed
+    double x;            // transverse X [mm]
+    double y;            // transverse Y [mm]
+    double z_start;      // beam Z of first compatible layer [mm]
+    int    nVotes;       // number of crossing points supporting this seed
+    double multiplicity; // nCompatCrossings / nCompatStations — track/shower discriminant
   };
 
   std::vector<SeedCandidate> findSeeds(
@@ -262,11 +295,40 @@ std::vector<ACTSProtoTracker::SeedCandidate> ACTSProtoTracker::findSeeds(
   };
   std::vector<Point2D> points2D;
 
-  // --- Source A: SiPad 2D hits ---
+  // Isolation filter settings (shared by Source A and Source B)
+  const double isolWin      = m_isolationWindow.value();
+  const int    isolMaxNeigh = m_isolationMaxNeighbors.value();
+  const bool   doIsolation  = (isolWin > 0.0);
+  const double isolWin2     = isolWin * isolWin;
+
+  // --- Source A: SiPad 2D hits with position-level isolation ---
+  // Group SiPad hits by surface (layer), then apply 2D isolation per layer.
+  // SiPad hit at (x,y) is isolated if few other hits on the same layer
+  // are within IsolationWindow mm.
+  std::map<const Acts::Surface*, std::vector<const SNDMeasurement*>> sipadBySurface;
   for (const auto& m : measurements) {
-    if (!m.is2D) continue;
-    double beamZ = m.surface->center(gctx).x();  // ACTS X = DD4hep beam Z
-    points2D.push_back({m.localCoord, m.localCoord2, beamZ, 1});
+    if (m.is2D) sipadBySurface[m.surface].push_back(&m);
+  }
+
+  for (const auto& [surf, layerHits] : sipadBySurface) {
+    double beamZ = surf->center(gctx).x();
+    for (std::size_t i = 0; i < layerHits.size(); ++i) {
+      const auto* mp = layerHits[i];
+
+      if (doIsolation) {
+        int nNeigh = 0;
+        for (std::size_t j = 0; j < layerHits.size(); ++j) {
+          if (j == i) continue;
+          double dx = layerHits[j]->localCoord  - mp->localCoord;
+          double dy = layerHits[j]->localCoord2 - mp->localCoord2;
+          if (dx*dx + dy*dy < isolWin2) ++nNeigh;
+          if (nNeigh > isolMaxNeigh) break;  // early exit
+        }
+        if (nNeigh > isolMaxNeigh) continue;  // dense → skip
+      }
+
+      points2D.push_back({mp->localCoord, mp->localCoord2, beamZ, 1});
+    }
   }
 
   // --- Source B: SiTarget strip crossings ---
@@ -293,30 +355,54 @@ std::vector<ACTSProtoTracker::SeedCandidate> ACTSProtoTracker::findSeeds(
     stationGroups[key].push_back(&m);
   }
 
-  // For each station group, form all StripX × StripY crossings
+  // --- Source B: SiTarget strip crossings with crossing-level isolation ---
+  // Form ALL StripX x StripY crossings first, then filter by 2D density
+  // within each station. This correctly handles tracks sharing X or Y coords.
   for (const auto& [key, stationMeas] : stationGroups) {
-    // Separate into plane=0 (StripX) and plane=1 (StripY)
     std::vector<const SNDMeasurement*> stripX, stripY;
     for (const auto* m : stationMeas) {
       if (m->plane == 0) stripX.push_back(m);
       else if (m->plane == 1) stripY.push_back(m);
     }
-
     if (stripX.empty() || stripY.empty()) continue;
 
-    // Form all (StripX, StripY) crossing pairs
-    // localCoord of StripX = X position [mm]
-    // localCoord of StripY = Y position [mm]
+    // Step 1: Form ALL crossings for this station (no prefiltering)
+    struct Crossing2D { double x, y, z; };
+    std::vector<Crossing2D> stationCrossings;
     for (const auto* mx : stripX) {
       for (const auto* my : stripY) {
-        double crossX = mx->localCoord;  // X from StripX
-        double crossY = my->localCoord;  // Y from StripY
-        // Use Z midpoint of the two planes
         double zX = mx->surface->center(gctx).x();
         double zY = my->surface->center(gctx).x();
-        double crossZ = 0.5 * (zX + zY);
-        points2D.push_back({crossX, crossY, crossZ, 2});
+        stationCrossings.push_back({
+            mx->localCoord,   // X from StripX
+            my->localCoord,   // Y from StripY
+            0.5 * (zX + zY)  // beam Z midpoint
+        });
       }
+    }
+
+    // Hard cap: if station has too many crossings, skip entirely (shower)
+    const int maxCrossingsPerStation = 500;  // tune as needed
+    if ((int)stationCrossings.size() > maxCrossingsPerStation) continue;
+
+    // Step 2: Apply crossing isolation filter if enabled
+    // Keep only crossings with <= isolMaxNeigh neighbors within isolWin mm
+    for (std::size_t ci = 0; ci < stationCrossings.size(); ++ci) {
+      const auto& c = stationCrossings[ci];
+
+      if (doIsolation) {
+        int nNeigh = 0;
+        for (std::size_t cj = 0; cj < stationCrossings.size(); ++cj) {
+          if (cj == ci) continue;
+          double dx = stationCrossings[cj].x - c.x;
+          double dy = stationCrossings[cj].y - c.y;
+          if (dx*dx + dy*dy < isolWin2) ++nNeigh;
+          if (nNeigh > isolMaxNeigh) break;  // early exit
+        }
+        if (nNeigh > isolMaxNeigh) continue;  // dense → skip
+      }
+
+      points2D.push_back({c.x, c.y, c.z, 2});
     }
   }
 
@@ -355,12 +441,10 @@ std::vector<ACTSProtoTracker::SeedCandidate> ACTSProtoTracker::findSeeds(
   }
 
   // =========================================================================
-  // STEP 3: Find peaks with non-maximum suppression
+  // STEP 3: Find local maxima
   // =========================================================================
-
   const int minVotes    = m_houghMinVotes.value();
-  const int suppressRad = static_cast<int>(
-      std::ceil(15.0 / binSize));  // suppress within 15mm
+  const int suppressRad = static_cast<int>(std::ceil(15.0 / binSize));
 
   struct Peak { int ix; int iy; int votes; };
   std::vector<Peak> peaks;
@@ -385,56 +469,100 @@ std::vector<ACTSProtoTracker::SeedCandidate> ACTSProtoTracker::findSeeds(
   std::sort(peaks.begin(), peaks.end(),
             [](const Peak& a, const Peak& b) { return a.votes > b.votes; });
 
-  std::vector<bool> suppressed(peaks.size(), false);
-  for (std::size_t i = 0; i < peaks.size(); ++i) {
+  // =========================================================================
+  // STEP 3b: Compute crossing multiplicity per station for each peak
+  // =========================================================================
+  // multiplicity = nCompatCrossings / nCompatStations
+  // Track:  1 crossing per station → multiplicity ≈ 1
+  // Shower: many crossings per station → multiplicity ≈ 100+
+  // A Point2D from a crossing has a z coordinate (station beam Z).
+  // Round z to the nearest stationTolerance to identify unique stations.
+
+  const double compatR  = m_seedCompatRadius.value();
+  const double compatR2 = compatR * compatR;
+  const double maxMult  = m_houghMaxMultiplicity.value();
+
+  struct PeakWithMult {
+    int    ix, iy, votes;
+    double multiplicity;
+  };
+  std::vector<PeakWithMult> peaksWithMult;
+
+  for (const auto& pk : peaks) {
+    const double peakX = fromBin(pk.ix);
+    const double peakY = fromBin(pk.iy);
+
+    int nCompatCrossings = 0;
+    std::set<int> compatStations;  // unique station keys within compatR
+
+    for (const auto& p : points2D) {
+      double dx = p.x - peakX, dy = p.y - peakY;
+      if (dx*dx + dy*dy < compatR2) {
+        nCompatCrossings += p.weight;
+        // Station key: round beam Z to nearest stationTolerance mm
+        int stationKey = static_cast<int>(
+            std::round(p.z / stationTolerance));
+        compatStations.insert(stationKey);
+      }
+    }
+
+    const int nStations = static_cast<int>(compatStations.size());
+    const double mult   = (nStations > 0)
+        ? static_cast<double>(nCompatCrossings) / nStations
+        : 0.0;
+
+    peaksWithMult.push_back({pk.ix, pk.iy, pk.votes, mult});
+  }
+
+  // Non-maximum suppression (same as before, operating on peaksWithMult)
+  std::vector<bool> suppressed(peaksWithMult.size(), false);
+  for (std::size_t i = 0; i < peaksWithMult.size(); ++i) {
     if (suppressed[i]) continue;
-    for (std::size_t j = i + 1; j < peaks.size(); ++j) {
+    for (std::size_t j = i + 1; j < peaksWithMult.size(); ++j) {
       if (suppressed[j]) continue;
-      int dx = std::abs(peaks[i].ix - peaks[j].ix);
-      int dy = std::abs(peaks[i].iy - peaks[j].iy);
-      if (dx <= suppressRad && dy <= suppressRad)
-        suppressed[j] = true;
+      int dx = std::abs(peaksWithMult[i].ix - peaksWithMult[j].ix);
+      int dy = std::abs(peaksWithMult[i].iy - peaksWithMult[j].iy);
+      if (dx <= suppressRad && dy <= suppressRad) suppressed[j] = true;
     }
   }
 
   // =========================================================================
-  // STEP 4: Refine seed position using most-frequent strip
+  // STEP 4: Classify peaks and refine seed position using most-frequent strip
   // =========================================================================
-  // The centroid of compatible 2D points is biased by ghost crossings.
-  // Instead, find the most frequently occurring strip value (rounded to
-  // strip pitch) in X and Y separately. The real muon strip dominates
-  // in frequency — ghost crossings scatter to different strip positions.
-  // This gives strip-level precision (~75μm) for the seed position.
-
-  const double compatR  = m_seedCompatRadius.value();
-  const double compatR2 = compatR * compatR;
-  const int    maxS     = m_maxSeeds.value();
-
-  // Strip pitch for frequency binning [mm]
+  const int    maxS       = m_maxSeeds.value();
   const double stripPitch = m_stripPitch.value();
 
-  for (std::size_t pi = 0; pi < peaks.size() && (int)seeds.size() < maxS; ++pi) {
+  for (std::size_t pi = 0; pi < peaksWithMult.size() && (int)seeds.size() < maxS; ++pi) {
     if (suppressed[pi]) continue;
 
-    const double peakX = fromBin(peaks[pi].ix);
-    const double peakY = fromBin(peaks[pi].iy);
+    const auto& pk     = peaksWithMult[pi];
+    const double peakX = fromBin(pk.ix);
+    const double peakY = fromBin(pk.iy);
 
-    // Collect compatible 2D points and find most frequent X and Y strips
-    // Use std::map with rounded strip index as key
-    std::map<int, int> xStripFreq;  // strip_index → total weight
-    std::map<int, int> yStripFreq;
+    // Log all peaks at DEBUG level for tuning HoughMaxMultiplicity
+    debug() << "[ACTSProtoTracker] Hough peak: x=" << peakX
+            << " y=" << peakY
+            << " votes=" << pk.votes
+            << " multiplicity=" << pk.multiplicity
+            << " (crossings/station)" << endmsg;
+
+    // Track/shower classification: skip high-multiplicity peaks
+    if (pk.multiplicity > maxMult) {
+      debug() << "[ACTSProtoTracker]   -> SHOWER (multiplicity=" << pk.multiplicity
+              << " > HoughMaxMultiplicity=" << maxMult << ") -- skipped." << endmsg;
+      continue;
+    }
+
+    // Most-frequent strip refinement
+    std::map<int,int> xFreq, yFreq;
     double firstZ = std::numeric_limits<double>::max();
-    int    nPts   = 0;
+    int nPts = 0;
 
     for (const auto& p : points2D) {
-      double dx = p.x - peakX;
-      double dy = p.y - peakY;
+      double dx = p.x - peakX, dy = p.y - peakY;
       if (dx*dx + dy*dy < compatR2) {
-        // Round to nearest strip index
-        int xStrip = static_cast<int>(std::round(p.x / stripPitch));
-        int yStrip = static_cast<int>(std::round(p.y / stripPitch));
-        xStripFreq[xStrip] += p.weight;
-        yStripFreq[yStrip] += p.weight;
+        xFreq[static_cast<int>(std::round(p.x/stripPitch))] += p.weight;
+        yFreq[static_cast<int>(std::round(p.y/stripPitch))] += p.weight;
         nPts += p.weight;
         if (p.z < firstZ) firstZ = p.z;
       }
@@ -442,31 +570,22 @@ std::vector<ACTSProtoTracker::SeedCandidate> ACTSProtoTracker::findSeeds(
 
     if (nPts == 0) continue;
 
-    // Find most frequent X strip
     double refinedX = peakX;
-    int maxXFreq = 0;
-    for (const auto& [strip, freq] : xStripFreq) {
-      if (freq > maxXFreq) {
-        maxXFreq = freq;
-        refinedX = strip * stripPitch;
-      }
-    }
+    int maxXF = 0;
+    for (const auto& [strip, freq] : xFreq)
+      if (freq > maxXF) { maxXF = freq; refinedX = strip * stripPitch; }
 
-    // Find most frequent Y strip
     double refinedY = peakY;
-    int maxYFreq = 0;
-    for (const auto& [strip, freq] : yStripFreq) {
-      if (freq > maxYFreq) {
-        maxYFreq = freq;
-        refinedY = strip * stripPitch;
-      }
-    }
+    int maxYF = 0;
+    for (const auto& [strip, freq] : yFreq)
+      if (freq > maxYF) { maxYF = freq; refinedY = strip * stripPitch; }
 
     SeedCandidate sc;
-    sc.x       = refinedX;
-    sc.y       = refinedY;
-    sc.z_start = firstZ;
-    sc.nVotes  = peaks[pi].votes;
+    sc.x            = refinedX;
+    sc.y            = refinedY;
+    sc.z_start      = firstZ;
+    sc.nVotes       = pk.votes;
+    sc.multiplicity = pk.multiplicity;
     seeds.push_back(sc);
   }
 
@@ -767,7 +886,8 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
                   << ": x=" << autoSeeds[si].x
                   << " y=" << autoSeeds[si].y
                   << " z_start=" << autoSeeds[si].z_start
-                  << " votes=" << autoSeeds[si].nVotes << endmsg;
+                  << " votes=" << autoSeeds[si].nVotes
+                  << " multiplicity=" << autoSeeds[si].multiplicity << endmsg;
         }
       }
 

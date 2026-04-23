@@ -20,8 +20,6 @@ gaudi_add_module(SND_reco
     gaudi_source/GeV2MIPConversion.cpp
     gaudi_source/BasicDigitizer.cpp
     gaudi_source/ContributionInspector.cpp
-    gaudi_source/DelayTagger.cpp
-    gaudi_source/EventMerger.cpp
     gaudi_source/EventWindowSplitter.cpp
     gaudi_source/EventShuffler.cpp
     gaudi_source/EDM4HEP2RNTuple.cpp
