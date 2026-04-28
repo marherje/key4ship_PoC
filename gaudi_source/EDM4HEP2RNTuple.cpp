@@ -2,6 +2,7 @@
 #include "GaudiKernel/MsgStream.h"
 #include "k4FWCore/DataHandle.h"
 #include "edm4hep/SimCalorimeterHitCollection.h"
+#include "edm4hep/TrackerHit3DCollection.h"
 #include "edm4hep/TrackCollection.h"
 #include "DD4hep/BitFieldCoder.h"
 #include "podio/ROOTReader.h"
@@ -167,6 +168,72 @@ public:
                << endmsg;
       }
 
+      // ---- Measurement (TrackerHit3D) RNTuple setup -------------------------
+      const auto& mColls   = m_measCollections.value();
+      const auto& mNames   = m_measNtupleNames.value();
+      const auto& mBFields = m_measBitFields.value();
+
+      if (!mColls.empty()) {
+        if (mColls.size() != mNames.size() || mColls.size() != mBFields.size()) {
+          error() << "[EDM4HEP2RNTuple] MeasCollections, MeasNtupleNames and "
+                  << "MeasBitFields must have the same size." << endmsg;
+          return StatusCode::FAILURE;
+        }
+
+        for (std::size_t mi = 0; mi < mColls.size(); ++mi) {
+          m_measHandles.push_back(
+              std::make_unique<k4FWCore::DataHandle<edm4hep::TrackerHit3DCollection>>(
+                  mColls[mi], Gaudi::DataHandle::Reader, this));
+
+          m_measDecoders.push_back(
+              std::make_unique<dd4hep::DDSegmentation::BitFieldCoder>(mBFields[mi]));
+
+          auto model = ROOT::RNTupleModel::Create();
+
+          auto fWindowID = model->MakeField<int>("window_id");
+          auto fX        = model->MakeField<float>("x");
+          auto fY        = model->MakeField<float>("y");
+          auto fZ        = model->MakeField<float>("z");
+          auto fPlane    = model->MakeField<int>("plane");
+          auto fLayer    = model->MakeField<int>("layer");
+          auto fColumn   = model->MakeField<int>("column");
+          auto fRow      = model->MakeField<int>("row");
+          auto fEdep     = model->MakeField<float>("edep");
+          auto fSourceID = model->MakeField<int>("source_id");
+
+          MeasFields mf;
+          mf.fWindowID = fWindowID.get();
+          mf.fX        = fX.get();
+          mf.fY        = fY.get();
+          mf.fZ        = fZ.get();
+          mf.fPlane    = fPlane.get();
+          mf.fLayer    = fLayer.get();
+          mf.fColumn   = fColumn.get();
+          mf.fRow      = fRow.get();
+          mf.fEdep     = fEdep.get();
+          mf.fSourceID = fSourceID.get();
+
+          mf.intPtrs.push_back(std::move(fWindowID));
+          mf.intPtrs.push_back(std::move(fPlane));
+          mf.intPtrs.push_back(std::move(fLayer));
+          mf.intPtrs.push_back(std::move(fColumn));
+          mf.intPtrs.push_back(std::move(fRow));
+          mf.intPtrs.push_back(std::move(fSourceID));
+          mf.floatPtrs.push_back(std::move(fX));
+          mf.floatPtrs.push_back(std::move(fY));
+          mf.floatPtrs.push_back(std::move(fZ));
+          mf.floatPtrs.push_back(std::move(fEdep));
+
+          m_measFields.push_back(std::move(mf));
+
+          m_measWriters.push_back(ROOT::RNTupleWriter::Append(
+              std::move(model), mNames[mi], *m_outputTFile));
+
+          info() << "[EDM4HEP2RNTuple] Measurement RNTuple '" << mNames[mi]
+                 << "' from collection '" << mColls[mi] << "'" << endmsg;
+        }
+      }
+
       // ---- Track RNTuple setup (optional) ----------------------------------
       if (!m_trackFile.value().empty()) {
         try {
@@ -311,6 +378,52 @@ public:
         }
       }
 
+      // ---- Export TrackerHit3D measurements ----------------------------------
+      for (std::size_t mi = 0; mi < m_measHandles.size(); ++mi) {
+        try {
+          const auto* hits = m_measHandles[mi]->get();
+          if (!hits) continue;
+
+          auto& mf      = m_measFields[mi];
+          auto& decoder = *m_measDecoders[mi];
+          const int sourceID = 0;
+
+          for (std::size_t hi = 0; hi < hits->size(); ++hi) {
+            const auto& hit = (*hits)[hi];
+            const auto& pos = hit.getPosition();
+            const uint64_t cid = hit.getCellID();
+
+            int plane  = 0, layer = 0, column = 0, row = 0;
+            try {
+              for (std::size_t fi = 0; fi < decoder.size(); ++fi) {
+                const auto& fname = decoder[fi].name();
+                if      (fname == "plane")  plane  = static_cast<int>(decoder.get(cid, "plane"));
+                else if (fname == "layer")  layer  = static_cast<int>(decoder.get(cid, "layer"));
+                else if (fname == "column") column = static_cast<int>(decoder.get(cid, "column"));
+                else if (fname == "row")    row    = static_cast<int>(decoder.get(cid, "row"));
+              }
+            } catch (...) {}
+
+            *mf.fWindowID = static_cast<int>(windowID);
+            *mf.fX        = static_cast<float>(pos.x);
+            *mf.fY        = static_cast<float>(pos.y);
+            *mf.fZ        = static_cast<float>(pos.z);
+            *mf.fPlane    = plane;
+            *mf.fLayer    = layer;
+            *mf.fColumn   = column;
+            *mf.fRow      = row;
+            *mf.fEdep     = hit.getEDep();
+            *mf.fSourceID = sourceID;
+
+            m_measWriters[mi]->Fill();
+          }
+        } catch (const std::exception& e) {
+          warning() << "[EDM4HEP2RNTuple] Could not export measurements["
+                    << mi << "] for window " << windowID
+                    << ": " << e.what() << " — skipping." << endmsg;
+        }
+      }
+
       // ---- Export tracks if enabled ----------------------------------------
       if (m_trackWriter && m_trackReader &&
           static_cast<std::size_t>(windowID) < m_nTrackEvents) {
@@ -362,6 +475,11 @@ public:
 
   StatusCode finalize() override {
     try {
+      for (auto& w : m_measWriters) if (w) w.reset();
+      m_measHandles.clear();
+      m_measFields.clear();
+      m_measDecoders.clear();
+
       if (m_trackWriter) { m_trackWriter.reset(); }
       m_trackReader.reset();
       m_trackIntPtrs.clear();
@@ -429,6 +547,19 @@ private:
     this, "TrackCollectionName", "ACTSTracks",
     "Name of the track collection inside TrackFile."};
 
+  // Measurement collections (TrackerHit3D from converters)
+  Gaudi::Property<std::vector<std::string>> m_measCollections{
+      this, "MeasCollections", {},
+      "TrackerHit3D collection names to export (e.g. SiTargetMeasurements)."};
+
+  Gaudi::Property<std::vector<std::string>> m_measNtupleNames{
+      this, "MeasNtupleNames", {},
+      "RNTuple names for each MeasCollection (e.g. SiTargetMeas)."};
+
+  Gaudi::Property<std::vector<std::string>> m_measBitFields{
+      this, "MeasBitFields", {},
+      "BitField strings for decoding cellID of each MeasCollection."};
+
   // One DataHandle per collection, built in initialize() from m_collections.
   mutable std::vector<
       std::unique_ptr<k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>
@@ -469,6 +600,32 @@ private:
     std::vector<std::shared_ptr<int>>  fieldSharedPtrs;
   };
   mutable std::vector<DetectorFields> m_detFields;
+
+  // DataHandles for measurement collections (TrackerHit3D)
+  mutable std::vector<
+      std::unique_ptr<k4FWCore::DataHandle<edm4hep::TrackerHit3DCollection>>>
+      m_measHandles;
+
+  // RNTuple writers for measurements
+  mutable std::vector<std::unique_ptr<ROOT::RNTupleWriter>> m_measWriters;
+
+  struct MeasFields {
+    int*      fWindowID = nullptr;
+    float*    fX        = nullptr;
+    float*    fY        = nullptr;
+    float*    fZ        = nullptr;
+    int*      fPlane    = nullptr;
+    int*      fLayer    = nullptr;
+    int*      fColumn   = nullptr;
+    int*      fRow      = nullptr;
+    float*    fEdep     = nullptr;
+    int*      fSourceID = nullptr;
+    std::vector<std::shared_ptr<int>>   intPtrs;
+    std::vector<std::shared_ptr<float>> floatPtrs;
+  };
+  mutable std::vector<MeasFields> m_measFields;
+  mutable std::vector<std::unique_ptr<dd4hep::DDSegmentation::BitFieldCoder>>
+      m_measDecoders;
 
   // Direct podio reader for track file (bypasses Gaudi DataHandle)
   mutable std::unique_ptr<podio::ROOTReader> m_trackReader;
