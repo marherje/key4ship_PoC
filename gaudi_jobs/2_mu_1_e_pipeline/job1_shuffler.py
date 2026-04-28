@@ -7,9 +7,9 @@ from Configurables import EventShuffler
 
 shuffler = EventShuffler("EventShuffler")
 shuffler.InputFiles = [
-    "../../simulation/run_script/data/output_e-_xyz_0.1_0.1_-1000_dir_0_0_1_E50.edm4hep.root",
+    "../../simulation/run_script/data/output_e-_xyz_1_1_-1000_dir_0_0_1_E50.edm4hep.root",
     "../../simulation/run_script/data/output_mu-_xyz_82.5_82.5_-1000_dir_0_0_1_E50.edm4hep.root",
-    "../../simulation/run_script/data/output_mu-_xyz_0.1_-82.5_-1000_dir_0_0_1_E50.edm4hep.root"
+    "../../simulation/run_script/data/output_mu-_xyz_1_-82.5_-1000_dir_0_0_1_E50.edm4hep.root"
 ]
 shuffler.SourceIDs = [1, 2, 3]
 shuffler.Delays    = [25.0001, 15.0, 25]   # ns, adjust per source

@@ -36,14 +36,14 @@ source launch_PG.sh
 cd ../..
 
 # 5. Run gaudi algorithm/s
-cd gaudi_jobs/two_muons_pipeline
-source two_muons_pipeline
-# For ACTS
-k4run job_tracking.py
+cd gaudi_jobs/2_mu_pipeline
+source 2_mu_pipeline.sh
+# This bash script can do the whole pipeline by itself
+# Different cases to test in /gaudi_jobs/ 
 
 # For using the event display.
-# In folfer /eventdisplay/ do
-python event_display_eve.py --hits ../gaudi_jobs/two_muons_pipeline/ShipHits.root --window 0 --source-labels "0:mixed" "1:Sig1" "2:Sig2"
+# In folder /eventdisplay/ do
+python event_display_eve.py --hits ../gaudi_jobs/2_mu_pipeline/ShipHits.root --window 0 
 # where window is the "event"
 
 ```

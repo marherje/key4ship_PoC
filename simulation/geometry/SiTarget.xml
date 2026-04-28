@@ -9,6 +9,9 @@
         env_width="SiTarget_env_width"
         env_height="SiTarget_env_height"
         z_position="SiTarget_z_position"
+        sensor_width="SiTarget_sensor_width"
+        sensor_height="SiTarget_sensor_height"
+        sensor_gap="SiTarget_sensor_gap"
   />
 
   <layer repeat="SiTarget_NLayers">

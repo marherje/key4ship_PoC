@@ -88,7 +88,8 @@ StatusCode ACTSGeoSvc::initialize() {
                 (volName.find("_slice_4") != std::string::npos);
       }
 
-      if (inDetector && isSensitive) {
+            bool isSliceContainer = (volName.find("_col") == std::string::npos);
+      if (inDetector && isSensitive && isSliceContainer) {
         if (mgr->cd(curPath.c_str())) {
           TGeoMatrix* mat  = mgr->GetCurrentMatrix();
           const double* tr = mat->GetTranslation();

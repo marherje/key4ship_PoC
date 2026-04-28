@@ -66,6 +66,12 @@
     <constant name="SiTarget_layer_gap"      value="SiTarget_LayerDistance-SiTarget_WThickness-2*SiTarget_sensor_thickness-SiTarget_XY_plane_gap-SiTarget_module_offset"/>
     <constant name="SiTarget_LayerThickness"     value="SiTarget_LayerDistance"/>
     <constant name="SiTarget_z_position"     value="-1*(Ecal_dim_z/2.0 + env_safety + SiTarget_LayerThickness*SiTarget_NLayers/2.0 +10*mm)"/>
+    <!-- SiTarget sensor layout: 4 columns x 4 rows per plane (square sensors) -->
+    <constant name="SiTarget_sensor_width"    value="99.25*mm"/>  <!-- active X -->
+    <constant name="SiTarget_sensor_height"   value="99.25*mm"/>  <!-- active Y -->
+    <constant name="SiTarget_sensor_gap"      value="1.0*mm"/>    <!-- gap between sensors -->
+    <constant name="SiTarget_ncols"           value="4"/>
+    <constant name="SiTarget_nrows"           value="4"/>
   </define>
 
   <limits>
@@ -99,7 +105,9 @@
     <readout name="SiTargetHits">
       <!-- MultiSegmentation selects strip direction based on plane field:
            plane=0 → CartesianStripX (measures X coordinate)
-           plane=1 → CartesianStripY (measures Y coordinate) -->
+           plane=1 → CartesianStripY (measures Y coordinate)
+           column: 0-3 (4 columns in X), row: 0-3 (4 rows in Y)
+           strip: strip index within the sensor (up to 1298 strips) -->
       <segmentation type="MultiSegmentation" key="plane">
         <segmentation type="CartesianStripX"
                       key_value="0"
@@ -110,7 +118,7 @@
                       strip_size_x="SiTarget_strip_pitch"
                       offset_x="-(SiTarget_env_height/2.0)+0.001*mm"/>
       </segmentation>
-      <id>system:8,layer:8,slice:4,plane:1,strip:14</id>
+      <id>system:8,layer:8,slice:4,plane:1,column:2,row:2,strip:14</id>
     </readout>
   </readouts>
 

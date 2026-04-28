@@ -4,8 +4,9 @@ from Configurables import ACTSGeoSvc, SiTargetMeasConverter, \
 from Gaudi.Configuration import DEBUG, INFO
 
 iosvc = IOSvc()
-iosvc.Input  = "timewindows.edm4hep.root"
-iosvc.Output = "tracks.edm4hep.root"
+iosvc.Input          = "timewindows.edm4hep.root"
+iosvc.Output         = "tracks.edm4hep.root"
+iosvc.outputCommands = ["keep *"]  # save ALL collections including measurements
 
 geosvc = ACTSGeoSvc("ACTSGeoSvc")
 geosvc.CompactFile = "../../simulation/geometry/SND_compact.xml"
@@ -15,8 +16,13 @@ sitarget_conv = SiTargetMeasConverter("SiTargetMeasConverter")
 sitarget_conv.GeoSvc           = "ACTSGeoSvc"
 sitarget_conv.InputCollection  = "SiTargetHitsWindowed"
 sitarget_conv.OutputCollection = "SiTargetMeasurements"
-sitarget_conv.BitField         = "system:8,layer:8,slice:4,plane:1,strip:14"
+sitarget_conv.BitField         = "system:8,layer:8,slice:4,plane:1,column:2,row:2,strip:14"
 sitarget_conv.StripPitch       = 0.0755
+sitarget_conv.NSensorCols  = 4
+sitarget_conv.NSensorRows  = 4
+sitarget_conv.SensorWidth  = 99.25
+sitarget_conv.SensorHeight = 99.25
+sitarget_conv.SensorGap    = 1.0
 sitarget_conv.OutputLevel      = DEBUG
 
 sipad_conv = SiPadMeasConverter("SiPadMeasConverter")
