@@ -12,6 +12,8 @@
         sensor_width="SiTarget_sensor_width"
         sensor_height="SiTarget_sensor_height"
         sensor_gap="SiTarget_sensor_gap"
+        sensor_ncols="SiTarget_ncols"
+        sensor_nrows="SiTarget_nrows"
   />
 
   <layer repeat="SiTarget_NLayers">
