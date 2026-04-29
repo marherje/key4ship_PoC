@@ -36,8 +36,12 @@ dd4hep::Ref_t create_SiTarget(dd4hep::Detector& description,
   double sensor_gap = x_par.hasAttr(_Unicode(sensor_gap))
                       ? x_par.attr<double>(_Unicode(sensor_gap))
                       : 1.0;     // mm
-  const int nCols = 4;
-  const int nRows = 4;
+  const int nCols = x_par.hasAttr(_Unicode(sensor_ncols))
+                    ? x_par.attr<int>(_Unicode(sensor_ncols))
+                    : 4;   // default: 4 columns
+  const int nRows = x_par.hasAttr(_Unicode(sensor_nrows))
+                    ? x_par.attr<int>(_Unicode(sensor_nrows))
+                    : 2;   // default: 2 rows
 
   // Diagnostic: print actual values to verify DD4hep unit conversion
   dd4hep::printout(dd4hep::INFO, "SiTargetDetector",

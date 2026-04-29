@@ -53,7 +53,7 @@ private:
 
   Gaudi::Property<std::string> m_bitField{
       this, "BitField",
-      "system:8,layer:8,slice:4,plane:1,column:2,row:2,strip:11",
+      "system:8,layer:8,slice:4,plane:1,column:2,row:2,strip:14",
       "DD4hep BitField string for SiTarget cellID decoding"};
 
   Gaudi::Property<double> m_stripPitch{
@@ -65,7 +65,7 @@ private:
       this, "SensorWidth", 99.25,
       "Sensor active width in X [mm]"};
   Gaudi::Property<double> m_sensorHeight{
-      this, "SensorHeight", 99.25,
+      this, "SensorHeight", 199.5,
       "Sensor active height in Y [mm]"};
   Gaudi::Property<double> m_sensorGap{
       this, "SensorGap", 1.0,
@@ -74,7 +74,7 @@ private:
       this, "NSensorCols", 4,
       "Number of sensor columns (X direction)"};
   Gaudi::Property<int> m_nRows{
-      this, "NSensorRows", 4,
+      this, "NSensorRows", 2,
       "Number of sensor rows (Y direction)"};
 
   // ---- DataHandles ----

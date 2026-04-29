@@ -15,10 +15,10 @@
   <define>
     <!-- Detector type flag constants from DD4hep DetType.h -->
     <!-- These are needed by ACTS convertDD4hepDetector to classify subdetectors -->
-    <constant name="DetType_TRACKER"  value="0x1"/>
-    <constant name="DetType_BARREL"   value="0x10"/>
-    <constant name="DetType_STRIP"    value="0x80"/>
-    <constant name="DetType_PIXEL"    value="0x100"/>
+    <!-- <constant name="DetType_TRACKER"  value="0x1"/> -->
+    <!-- <constant name="DetType_BARREL"   value="0x10"/> -->
+    <!-- <constant name="DetType_STRIP"    value="0x80"/> -->
+    <!-- <constant name="DetType_PIXEL"    value="0x100"/> -->
 
     <!-- World -->
     <constant name="world_side" value="20*m"/>
@@ -66,12 +66,12 @@
     <constant name="SiTarget_layer_gap"      value="SiTarget_LayerDistance-SiTarget_WThickness-2*SiTarget_sensor_thickness-SiTarget_XY_plane_gap-SiTarget_module_offset"/>
     <constant name="SiTarget_LayerThickness"     value="SiTarget_LayerDistance"/>
     <constant name="SiTarget_z_position"     value="-1*(Ecal_dim_z/2.0 + env_safety + SiTarget_LayerThickness*SiTarget_NLayers/2.0 +10*mm)"/>
-    <!-- SiTarget sensor layout: 4 columns x 4 rows per plane (square sensors) -->
+    <!-- SiTarget sensor layout: 4 columns x 2 rows per plane (square sensors) -->
     <constant name="SiTarget_sensor_width"    value="99.25*mm"/>  <!-- active X -->
-    <constant name="SiTarget_sensor_height"   value="99.25*mm"/>  <!-- active Y -->
+    <constant name="SiTarget_sensor_height"   value="199.5*mm"/>  <!-- active Y -->
     <constant name="SiTarget_sensor_gap"      value="1.0*mm"/>    <!-- gap between sensors -->
     <constant name="SiTarget_ncols"           value="4"/>
-    <constant name="SiTarget_nrows"           value="4"/>
+    <constant name="SiTarget_nrows"           value="2"/>
   </define>
 
   <limits>
@@ -106,7 +106,7 @@
       <!-- MultiSegmentation selects strip direction based on plane field:
            plane=0 → CartesianStripX (measures X coordinate)
            plane=1 → CartesianStripY (measures Y coordinate)
-           column: 0-3 (4 columns in X), row: 0-3 (4 rows in Y)
+           column: 0-3 (4 columns in X), row: 0-1 (2 rows in Y)
            strip: strip index within the sensor (up to 1298 strips) -->
       <segmentation type="MultiSegmentation" key="plane">
         <segmentation type="CartesianStripX"

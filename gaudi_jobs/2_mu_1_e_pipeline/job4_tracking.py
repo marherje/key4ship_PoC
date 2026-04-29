@@ -20,9 +20,9 @@ sitarget_conv.OutputCollection = "SiTargetMeasurements"
 sitarget_conv.BitField         = "system:8,layer:8,slice:4,plane:1,column:2,row:2,strip:14"
 sitarget_conv.StripPitch       = 0.0755
 sitarget_conv.NSensorCols  = 4
-sitarget_conv.NSensorRows  = 4
+sitarget_conv.NSensorRows  = 2
 sitarget_conv.SensorWidth  = 99.25
-sitarget_conv.SensorHeight = 99.25
+sitarget_conv.SensorHeight = 199.5
 sitarget_conv.SensorGap    = 1.0
 sitarget_conv.OutputLevel      = DEBUG
 
