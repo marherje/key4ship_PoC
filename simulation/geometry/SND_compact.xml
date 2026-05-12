@@ -140,14 +140,16 @@
          Downstream split happens in EventShuffler based on the plane field. -->
     <readout name="MTCDetHits">
       <segmentation type="MultiSegmentation" key="plane">
-        <segmentation type="CartesianStripX"
+        <segmentation type="CartesianStripXStereo"
                       key_value="0"
                       strip_size_x="MTC_SciFiChannelSize"
-                      offset_x="-(MTC_max_env_width/2.0)+0.001*mm"/>
-        <segmentation type="CartesianStripX"
+                      offset_x="-(MTC_max_env_width/2.0)+0.001*mm"
+                      stereo_angle="5.0"/>
+        <segmentation type="CartesianStripXStereo"
                       key_value="1"
                       strip_size_x="MTC_SciFiChannelSize"
-                      offset_x="-(MTC_max_env_width/2.0)+0.001*mm"/>
+                      offset_x="-(MTC_max_env_width/2.0)+0.001*mm"
+                      stereo_angle="-5.0"/>
         <segmentation type="CartesianGridXY"
                       key_value="2"
                       grid_size_x="MTC_ScintCellSize"

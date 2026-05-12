@@ -29,7 +29,7 @@ df_scint = read_file(filename = "ShipHits.root", container = "MTCScint")
 df_scifi = read_file(filename = "ShipHits.root", container = "MTCSciFi")
 
 
-out_label = "_added_light_propagation_2"
+out_label = "_added_light_propagation_3_corrected_cartesian_segmentation"
 plot_columns(df_scifi, det = "scifi", label = out_label)
 plot_columns(df_scint, det = "scint", label = out_label)
 

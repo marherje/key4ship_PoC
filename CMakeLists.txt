@@ -15,7 +15,11 @@ target_link_libraries(SiPadDetector_plugin DD4hep::DDCore)
 dd4hep_add_plugin(SiTargetDetector_plugin SOURCES detector_plugin/SiTargetDetector.cpp)
 target_link_libraries(SiTargetDetector_plugin DD4hep::DDCore)
 
-dd4hep_add_plugin(MTCDetector_plugin SOURCES detector_plugin/MTCDetector.cpp)
+dd4hep_add_plugin(MTCDetector_plugin
+  SOURCES
+    detector_plugin/MTCDetector.cpp
+    detector_plugin/CartesianStripXStereo.cpp
+)
 target_link_libraries(MTCDetector_plugin DD4hep::DDCore)
 
 dd4hep_add_plugin(SND_SciFiAction_plugin SOURCES simulation/ddg4/SND_SciFiAction.cpp)
