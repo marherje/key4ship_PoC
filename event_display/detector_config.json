@@ -26,72 +26,81 @@
     },
     {
       "name": "MTC40_SciFiU",
-      "ntuple": "MTCMeas",
+      "ntuple": "MTCSciFiMeas",
       "filter": {"plane": 0},
       "color": [0.2, 0.8, 1.0],
       "voxel": {"x": 0.05, "y": 20.0, "z": 0.0675},
+      "stereo_deg": 5.0,
       "geo_extract": {"path_contains": "MTC40", "slice_index": 2}
     },
     {
       "name": "MTC40_SciFiV",
-      "ntuple": "MTCMeas",
+      "ntuple": "MTCSciFiMeas",
       "filter": {"plane": 1},
       "color": [0.0, 0.6, 1.0],
-      "voxel": {"x": 20.0, "y": 0.05, "z": 0.0675},
+      "voxel": {"x": 0.05, "y": 20.0, "z": 0.0675},
+      "stereo_deg": -5.0,
       "geo_extract": {"path_contains": "MTC40", "slice_index": 4}
     },
     {
       "name": "MTC40_Scint",
-      "ntuple": "MTCMeas",
-      "filter": {"plane": 2},
+      "ntuple": "MTCScint",
+      "filter": {},
+      "energy_field": "E",
       "color": [1.0, 0.8, 0.0],
       "voxel": {"x": 2.5, "y": 2.5, "z": 0.75},
       "geo_extract": {"path_contains": "MTC40", "slice_index": 6}
     },
     {
       "name": "MTC50_SciFiU",
-      "ntuple": "MTCMeas",
+      "ntuple": "MTCSciFiMeas",
       "filter": {"plane": 0},
       "color": [0.2, 0.8, 1.0],
       "voxel": {"x": 0.05, "y": 25.0, "z": 0.0675},
+      "stereo_deg": 5.0,
       "geo_extract": {"path_contains": "MTC50", "slice_index": 2}
     },
     {
       "name": "MTC50_SciFiV",
-      "ntuple": "MTCMeas",
+      "ntuple": "MTCSciFiMeas",
       "filter": {"plane": 1},
       "color": [0.0, 0.6, 1.0],
-      "voxel": {"x": 25.0, "y": 0.05, "z": 0.0675},
+      "voxel": {"x": 0.05, "y": 25.0, "z": 0.0675},
+      "stereo_deg": -5.0,
       "geo_extract": {"path_contains": "MTC50", "slice_index": 4}
     },
     {
       "name": "MTC50_Scint",
-      "ntuple": "MTCMeas",
-      "filter": {"plane": 2},
+      "ntuple": "MTCScint",
+      "filter": {},
+      "energy_field": "E",
       "color": [1.0, 0.8, 0.0],
       "voxel": {"x": 2.5, "y": 2.5, "z": 0.75},
       "geo_extract": {"path_contains": "MTC50", "slice_index": 6}
     },
     {
       "name": "MTC60_SciFiU",
-      "ntuple": "MTCMeas",
+      "ntuple": "MTCSciFiMeas",
       "filter": {"plane": 0},
       "color": [0.2, 0.8, 1.0],
       "voxel": {"x": 0.05, "y": 30.0, "z": 0.0675},
+      "stereo_deg": 5.0,
       "geo_extract": {"path_contains": "MTC60", "slice_index": 2}
     },
     {
       "name": "MTC60_SciFiV",
-      "ntuple": "MTCMeas",
+      "ntuple": "MTCSciFiMeas",
       "filter": {"plane": 1},
       "color": [0.0, 0.6, 1.0],
-      "voxel": {"x": 30.0, "y": 0.05, "z": 0.0675},
+      "voxel": {"x": 0.05, "y": 30.0, "z": 0.0675},
+      "stereo_deg": -5.0,
       "geo_extract": {"path_contains": "MTC60", "slice_index": 4}
     },
     {
       "name": "MTC60_Scint",
-      "ntuple": "MTCMeas",
-      "filter": {"plane": 2},
+      "ntuple": "MTCScint",
+      "filter": {},
+      "energy_field": "E",
       "color": [1.0, 0.8, 0.0],
       "voxel": {"x": 2.5, "y": 2.5, "z": 0.75},
       "geo_extract": {"path_contains": "MTC60", "slice_index": 6}

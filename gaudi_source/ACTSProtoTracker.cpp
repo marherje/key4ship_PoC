@@ -4,6 +4,9 @@
 #include "GaudiKernel/ServiceHandle.h"
 #include "k4FWCore/DataHandle.h"
 
+// DD4hep segmentation
+#include "DDSegmentation/BitFieldCoder.h"
+
 // edm4hep input
 #include "edm4hep/TrackerHit3DCollection.h"
 
@@ -134,6 +137,16 @@ private:
   Gaudi::Property<std::string> m_inputSiPad{
       this, "InputSiPad", "SiPadMeasurements",
       "SiPad TrackerHit3DCollection from SiPadMeasConverter"};
+  Gaudi::Property<std::string> m_inputMTC{
+      this, "InputMTC", "MTCSciFiMeasurements",
+      "MTC SciFi TrackerHit3DCollection from MTCSciFiMeasConverter"};
+  Gaudi::Property<double> m_mtcStereoAngle{
+      this, "MTCStereoAngle", 5.0,
+      "MTC SciFi stereo angle [degrees]"};
+  Gaudi::Property<std::string> m_mtcBitFieldStr{
+      this, "MTCBitField",
+      "system:8,station:2,layer:8,slice:4,plane:2,strip:14,x:9,y:9",
+      "BitField string for MTC cellID decoding"};
   Gaudi::Property<std::string> m_outputCollection{
       this, "OutputCollection", "ACTSTracks",
       "Output edm4hep::TrackCollection name"};
@@ -254,8 +267,12 @@ private:
       m_siTargetHandle;
   mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::TrackerHit3DCollection>>
       m_siPadHandle;
+  mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::TrackerHit3DCollection>>
+      m_mtcHandle;
   mutable std::unique_ptr<k4FWCore::DataHandle<edm4hep::TrackCollection>>
       m_outputHandle;
+
+  mutable std::unique_ptr<dd4hep::DDSegmentation::BitFieldCoder> m_mtcBitField;
 
   ServiceHandle<ISNDGeoSvc> m_geoSvc{
       this, "GeoSvc", "ACTSGeoSvc", "ACTS geometry service"};
@@ -264,9 +281,9 @@ private:
   mutable Acts::MagneticFieldContext m_mctx;
   mutable Acts::CalibrationContext   m_cctx;
 
-  // Dynamically computed in initialize(): number of SiTarget surfaces.
-  // SiPad surfaces start at this index in allSurfaces().
+  // Dynamically computed in initialize(): surface group sizes.
   mutable std::size_t m_nSiTargetSurfaces{0};
+  mutable std::size_t m_nSiPadSurfaces{0};
 
 };
 
@@ -403,6 +420,37 @@ std::vector<ACTSProtoTracker::SeedCandidate> ACTSProtoTracker::findSeeds(
       }
 
       points2D.push_back({c.x, c.y, c.z, 2});
+    }
+  }
+
+  // --- Source C: MTC SciFi U×V stereo crossings ---
+  // Group by surface Z rounded to 10mm to pair U and V slices of the same layer.
+  {
+    const double tan_stereo = std::tan(m_mtcStereoAngle.value() * M_PI / 180.0);
+    const int maxCrossingsPerLayer = 200;
+    std::map<int, std::vector<const SNDMeasurement*>> mtcGroups;
+    for (const auto& m : measurements) {
+      if (m.detectorID != 2) continue;
+      int key = static_cast<int>(std::round(m.surface->center(gctx).x() / 10.0));
+      mtcGroups[key].push_back(&m);
+    }
+    for (const auto& [key, meas] : mtcGroups) {
+      std::vector<const SNDMeasurement*> uPl, vPl;
+      for (const auto* m : meas) {
+        if (m->plane == 0) uPl.push_back(m);
+        else               vPl.push_back(m);
+      }
+      if (uPl.empty() || vPl.empty()) continue;
+      if (static_cast<int>(uPl.size() * vPl.size()) > maxCrossingsPerLayer) continue;
+      for (const auto* mu : uPl) {
+        for (const auto* mv : vPl) {
+          double x_cross = 0.5 * (mu->localCoord + mv->localCoord);
+          double y_cross = (mv->localCoord - mu->localCoord) / (2.0 * tan_stereo);
+          double z_cross = 0.5 * (mu->surface->center(gctx).x()
+                                 + mv->surface->center(gctx).x());
+          points2D.push_back({x_cross, y_cross, z_cross, 2});
+        }
+      }
     }
   }
 
@@ -607,9 +655,14 @@ StatusCode ACTSProtoTracker::initialize() {
     m_siPadHandle = std::make_unique<
         k4FWCore::DataHandle<edm4hep::TrackerHit3DCollection>>(
         m_inputSiPad.value(), Gaudi::DataHandle::Reader, this);
+    m_mtcHandle = std::make_unique<
+        k4FWCore::DataHandle<edm4hep::TrackerHit3DCollection>>(
+        m_inputMTC.value(), Gaudi::DataHandle::Reader, this);
     m_outputHandle = std::make_unique<
         k4FWCore::DataHandle<edm4hep::TrackCollection>>(
         m_outputCollection.value(), Gaudi::DataHandle::Writer, this);
+    m_mtcBitField = std::make_unique<dd4hep::DDSegmentation::BitFieldCoder>(
+        m_mtcBitFieldStr.value());
 
     if (!m_geoSvc.retrieve().isSuccess()) {
       error() << "[ACTSProtoTracker] Failed to retrieve ACTSGeoSvc." << endmsg;
@@ -627,24 +680,26 @@ StatusCode ACTSProtoTracker::initialize() {
       return StatusCode::FAILURE;
     }
 
-    double maxGap      = 0.0;
-    std::size_t gapIdx = 0;
+    // Find two largest gaps: SiTarget | gap1 | SiPad | gap2 | MTC
+    std::vector<std::pair<double, std::size_t>> gaps;
+    gaps.reserve(allSurf.size() - 1);
     for (std::size_t i = 1; i < allSurf.size(); ++i) {
-      // Surfaces are positioned along X in ACTS (beam coord swapped X<->Z)
-      double gap = allSurf[i]->center(gctx).x() -
-                   allSurf[i-1]->center(gctx).x();
-      if (gap > maxGap) {
-        maxGap  = gap;
-        gapIdx  = i;
-      }
+      double gap = allSurf[i]->center(gctx).x() - allSurf[i-1]->center(gctx).x();
+      gaps.push_back({gap, i});
     }
-    m_nSiTargetSurfaces = gapIdx;
+    std::partial_sort(gaps.begin(), gaps.begin() + 2, gaps.end(),
+        [](const std::pair<double,std::size_t>& a,
+           const std::pair<double,std::size_t>& b){ return a.first > b.first; });
+    std::size_t split1 = std::min(gaps[0].second, gaps[1].second);
+    std::size_t split2 = std::max(gaps[0].second, gaps[1].second);
+    m_nSiTargetSurfaces = split1;
+    m_nSiPadSurfaces    = split2 - split1;
 
     info() << "[ACTSProtoTracker] Initialized. GeoSvc has "
            << allSurf.size() << " surfaces. "
-           << "SiTarget surfaces: " << m_nSiTargetSurfaces
-           << " SiPad surfaces: " << (allSurf.size() - m_nSiTargetSurfaces)
-           << " (gap=" << maxGap << " mm)" << endmsg;
+           << "SiTarget=" << m_nSiTargetSurfaces
+           << " SiPad=" << m_nSiPadSurfaces
+           << " MTC=" << (allSurf.size() - split2) << endmsg;
 
     // Validate seed properties
     const std::size_t nPosVals = m_seedPositions.value().size();
@@ -737,7 +792,8 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
 
         const Acts::Surface* bestSurface = nullptr;
         double bestDist = 1e9;
-        for (std::size_t j = m_nSiTargetSurfaces; j < allSurfaces.size(); ++j) {
+        for (std::size_t j = m_nSiTargetSurfaces;
+             j < m_nSiTargetSurfaces + m_nSiPadSurfaces; ++j) {
           double dz = std::abs(allSurfaces[j]->center(gctx).x() - pos.z);
           if (dz < bestDist) {
             bestDist    = dz;
@@ -760,6 +816,35 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
       }
     }
 
+    // ---- MTC SciFi (1D stereo strips) -----------------------------------------
+    const auto* mtcHits = m_mtcHandle->get();
+    if (mtcHits) {
+      for (std::size_t i = 0; i < mtcHits->size(); ++i) {
+        const auto& hit   = (*mtcHits)[i];
+        const auto& pos   = hit.getPosition();
+        const auto& cov   = hit.getCovMatrix();
+        const int   plane = hit.getQuality();  // 0=U, 1=V
+
+        uint64_t cellID = hit.getCellID();
+        int station = static_cast<int>((*m_mtcBitField)["station"].value(cellID));
+        int layer   = static_cast<int>((*m_mtcBitField)["layer"].value(cellID));
+
+        const Acts::Surface* surf = m_geoSvc->surfaceByAddress(2, station, layer, plane);
+        if (!surf) {
+          warning() << "[ACTSProtoTracker] evt=" << evtNum
+                    << " MTC hit " << i
+                    << " station=" << station << " layer=" << layer
+                    << " plane=" << plane << " has no matching surface." << endmsg;
+          continue;
+        }
+
+        measurements.emplace_back(surf,
+                                   pos.x, 0.0, cov[0], 0.0,
+                                   false, 2, plane,
+                                   hit.getTime(), hit.getEDep());
+      }
+    }
+
     if (measurements.empty()) {
       debug() << "[ACTSProtoTracker] evt=" << evtNum
               << " no measurements." << endmsg;
@@ -773,8 +858,9 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
               });
 
     debug() << "[ACTSProtoTracker] evt=" << evtNum
-            << " SiTarget=" << (stHits ? stHits->size() : 0)
-            << " SiPad=" << (spHits ? spHits->size() : 0)
+            << " SiTarget=" << (stHits  ? stHits->size()  : 0)
+            << " SiPad="    << (spHits  ? spHits->size()  : 0)
+            << " MTC="      << (mtcHits ? mtcHits->size() : 0)
             << " total measurements=" << measurements.size() << endmsg;
 
     // =========================================================================
@@ -803,7 +889,16 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
                       Acts::VectorMultiTrajectory::TrackStateProxy ts) const {
         const auto& ssl = sl.get<SNDSourceLink>();
         const auto& m   = (*meas)[ssl.index];
-        if (m.is2D) {
+        if (m.detectorID == 2) {
+          // MTC SciFi: 1D on pre-stereo-rotated surface → always eBoundLoc0.
+          ts.allocateCalibrated(1);
+          ts.template calibrated<1>() = Acts::ActsVector<1>(m.localCoord);
+          ts.template calibratedCovariance<1>() =
+              Acts::ActsSquareMatrix<1>{{m.variance}};
+          constexpr std::array<Acts::BoundIndices, 1> mtcIdx = {Acts::eBoundLoc0};
+          ts.setProjectorSubspaceIndices(mtcIdx);
+          return;
+        } else if (m.is2D) {
           constexpr std::array<Acts::BoundIndices, 2> indices = {
               Acts::eBoundLoc0, Acts::eBoundLoc1};
           ts.allocateCalibrated(2);
@@ -990,7 +1085,9 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
         auto        gid = m.surface->geometryId();
 
         double dist = 0.0;
-        if (m.is2D) {
+        if (m.detectorID == 2) {
+          dist = std::abs(m.localCoord - seed_ref_x);
+        } else if (m.is2D) {
           double dx = m.localCoord  - seed_ref_x;
           double dy = m.localCoord2 - seed_ref_y;
           dist = std::sqrt(dx * dx + dy * dy);
@@ -1007,7 +1104,9 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
         } else {
           const auto& mExist = measurements[it->second];
           double existDist = 0.0;
-          if (mExist.is2D) {
+          if (mExist.detectorID == 2) {
+            existDist = std::abs(mExist.localCoord - seed_ref_x);
+          } else if (mExist.is2D) {
             double dx = mExist.localCoord  - seed_ref_x;
             double dy = mExist.localCoord2 - seed_ref_y;
             existDist = std::sqrt(dx * dx + dy * dy);
