@@ -11,3 +11,11 @@
 # Temporary files
 *~
 *.tmp
+
+build/
+simulation/run_script/
+graphify/
+.claude
+CLAUDE.md
+graphify-out/
+install/
