@@ -170,6 +170,8 @@ def build_hits(eve, hits_file, window_id, config):
         v          = det["voxel"]
         dx, dy, dz = v["x"], v["y"], v["z"]
         layers_z   = det["layers_z_cm"]
+        z_min = det.get("z_range", {}).get("min", float("-inf"))
+        z_max = det.get("z_range", {}).get("max", float("inf"))
 
         xs, ys, zs, Es, srcs, planes = read_hits(
             hits_file, ntuple, window_id, filter_dict=filter_d)
@@ -192,6 +194,8 @@ def build_hits(eve, hits_file, window_id, config):
             yc = ys[i] * mm2cm
             zc = zs[i] * mm2cm
             snap_z = nearest_plane(zc, layers_z)
+            if not (z_min <= snap_z <= z_max):
+                continue
             gs = make_box(f"{det_name}_hit_{i}",
                           dx, dy, dz,
                           xc, yc, snap_z,
@@ -203,6 +207,58 @@ def build_hits(eve, hits_file, window_id, config):
         hits_root.AddElement(det_list)
 
     eve.GetEventScene().AddElement(hits_root)
+
+
+# ---------------------------------------------------------------------------
+# GEOMETRY EXTRACTION from DD4hep (before TEveManager)
+# ---------------------------------------------------------------------------
+def extract_z_from_geometry(compact_xml, config):
+    """
+    Walk the DD4hep gGeoManager and fill layers_z_cm in-place for every
+    config entry that carries a 'geo_extract' rule.
+    Must be called before TEveManager.Create() — the two frameworks coexist
+    because TEveGeoShape positions via RefMainTrans, independent of gGeoManager.
+    Translation values from GetCurrentMatrix() are in cm (ROOT TGeo convention).
+    """
+    ROOT.gSystem.Load("libDDCore")
+    desc = ROOT.dd4hep.Detector.getInstance()
+    desc.fromXML(compact_xml)
+    mgr = ROOT.gGeoManager
+
+    rules = {}
+    for entry in config.get("detectors", []) + config.get("geometry", []):
+        ge = entry.get("geo_extract")
+        if ge:
+            rules[id(entry)] = {
+                "path_contains": ge["path_contains"],
+                "slice_suffix":  f"_slice_{ge['slice_index']}",
+                "entry":         entry,
+                "zs":            [],
+            }
+
+    def walk(node, path=""):
+        vol  = node.GetVolume()
+        name = vol.GetName()
+        current_path = path + "/" + node.GetName()
+        if "_slice_" in name:
+            if mgr.cd(current_path):
+                t = mgr.GetCurrentMatrix().GetTranslation()
+                for r in rules.values():
+                    if (r["path_contains"] in current_path
+                            and name.endswith(r["slice_suffix"])):
+                        r["zs"].append(round(t[2], 4))
+        for i in range(node.GetNdaughters()):
+            walk(node.GetDaughter(i), current_path)
+
+    walk(mgr.GetTopNode())
+
+    for r in rules.values():
+        zs = sorted(set(r["zs"]))
+        r["entry"]["layers_z_cm"] = zs
+        if zs:
+            # 3 cm margin safely separates MTC stations (~82 cm total length each)
+            r["entry"]["z_range"] = {"min": zs[0] - 3.0, "max": zs[-1] + 3.0}
+        print(f"[Geometry] {r['entry']['name']}: {len(zs)} layers extracted")
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +399,10 @@ def main():
                         help="Path to ShipHits.root (RNTuple file)")
     parser.add_argument("--config", default="detector_config.json",
                         help="Path to detector JSON config file")
+    parser.add_argument("--geometry",
+                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                             "../simulation/geometry/SND_compact.xml"),
+                        help="Path to DD4hep compact XML for layer z-extraction")
     parser.add_argument("--window", type=int, default=0,
                         help="Window/event index")
     args = parser.parse_args()
@@ -353,6 +413,11 @@ def main():
     with open(args.config) as f:
         config = json.load(f)
     print(f"[Config] Loaded {len(config['detectors'])} detector(s) from '{args.config}'")
+
+    if not os.path.exists(args.geometry):
+        print(f"[Geometry] ERROR: compact XML not found: '{args.geometry}'")
+        raise SystemExit(1)
+    extract_z_from_geometry(args.geometry, config)
 
     track_data = read_track_points(args.hits, args.window)
 
