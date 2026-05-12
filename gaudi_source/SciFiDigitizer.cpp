@@ -87,7 +87,7 @@ public:
 
         // SiPM end of this specific fiber.
         // U plane (plane=0) tilts +angle; V plane (plane=1) tilts -angle.
-        const double sign    = (plane == 0) ? +1.0 : -1.0;
+        const double sign    = (plane == 0) ? -1.0 : +1.0;
         const double y_sipm  = sipm_side * h_half;                        // mm
         const double x_sipm  = x_hit + sign * y_sipm * tan_a;            // mm
 

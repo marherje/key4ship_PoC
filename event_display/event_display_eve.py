@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import ROOT
 
@@ -41,7 +42,7 @@ def nearest_plane(hit_cm, plane_list):
 # ---------------------------------------------------------------------------
 # UTILITY: make TEveGeoShape box
 # ---------------------------------------------------------------------------
-def make_box(name, dx, dy, dz, x, y, z, color, transparency=0):
+def make_box(name, dx, dy, dz, x, y, z, color, transparency=0, stereo_deg=0.0):
     shape = ROOT.TGeoBBox(dx, dy, dz)
     gs = ROOT.TEveGeoShape(name)
     gs.SetShape(shape)
@@ -49,6 +50,11 @@ def make_box(name, dx, dy, dz, x, y, z, color, transparency=0):
     gs.SetFillColor(color)
     gs.SetLineColor(color)
     gs.SetMainTransparency(transparency)
+    if stereo_deg != 0.0:
+        # RotateLF(1,2,phi) maps local Y → (-sin(phi), cos(phi), 0) in world.
+        # stereo_deg is the physical strip angle (+5 for U, -5 for V), so we
+        # negate it: phi = -stereo_deg gives local Y → (+sin(stereo_deg), cos(stereo_deg)).
+        gs.RefMainTrans().RotateLF(1, 2, -stereo_deg * math.pi / 180.0)
     gs.RefMainTrans().SetPos(x, y, z)
     gs.ResetBBox()
     return gs
@@ -67,10 +73,12 @@ def rgb_to_root_color(r, g, b):
 # ---------------------------------------------------------------------------
 # READ HITS FROM RNTUPLE (generic, with optional plane filter)
 # ---------------------------------------------------------------------------
-def read_hits(hits_file, ntuple_name, window_id, filter_dict=None):
+def read_hits(hits_file, ntuple_name, window_id, filter_dict=None, energy_field="edep"):
     """
     Read hits from an RNTuple. filter_dict applies equality filters on integer
     fields, e.g. {"plane": 0} keeps only hits where plane==0.
+    energy_field selects the energy branch name: "edep" for TrackerHit3D
+    measurement RNTuples, "E" for raw SimCalorimeterHit RNTuples.
     Returns xs, ys, zs, Es, srcs, planes (coords in mm, not yet converted).
     """
     filter_decls  = ""
@@ -90,7 +98,7 @@ def read_hits(hits_file, ntuple_name, window_id, filter_dict=None):
             auto vx   = reader->GetView<float>("x");
             auto vy   = reader->GetView<float>("y");
             auto vz   = reader->GetView<float>("z");
-            auto vE   = reader->GetView<float>("edep");
+            auto vE   = reader->GetView<float>("{energy_field}");
             auto vsrc = reader->GetView<int>("source_id");
             {filter_decls}
             try {{
@@ -173,8 +181,11 @@ def build_hits(eve, hits_file, window_id, config):
         z_min = det.get("z_range", {}).get("min", float("-inf"))
         z_max = det.get("z_range", {}).get("max", float("inf"))
 
+        stereo_deg = det.get("stereo_deg", 0.0)
+
         xs, ys, zs, Es, srcs, planes = read_hits(
-            hits_file, ntuple, window_id, filter_dict=filter_d)
+            hits_file, ntuple, window_id, filter_dict=filter_d,
+            energy_field=det.get("energy_field", "edep"))
 
         if not xs:
             print(f"[Hits] {det_name}: no hits")
@@ -199,7 +210,8 @@ def build_hits(eve, hits_file, window_id, config):
             gs = make_box(f"{det_name}_hit_{i}",
                           dx, dy, dz,
                           xc, yc, snap_z,
-                          det_color, transparency=0)
+                          det_color, transparency=0,
+                          stereo_deg=stereo_deg)
             grp.AddElement(gs)
 
         det_list.AddElement(grp)
@@ -328,6 +340,17 @@ def read_track_points(hits_file, window_id):
       }} catch (...) {{}}
       try {{
         auto r   = ROOT::RNTupleReader::Open("SiPadMeas", "{hits_file}");
+        auto vw  = r->GetView<int>("window_id");
+        auto vz  = r->GetView<float>("z");
+        std::set<int> seen;
+        for (auto i : r->GetEntryRange()) {{
+          if ((int)vw(i) != {window_id}) continue;
+          int iz = (int)std::round(vz(i));
+          if (!seen.count(iz)) {{ seen.insert(iz); SNDEve::gZ.push_back(vz(i)); }}
+        }}
+      }} catch (...) {{}}
+      try {{
+        auto r   = ROOT::RNTupleReader::Open("MTCSciFiMeas", "{hits_file}");
         auto vw  = r->GetView<int>("window_id");
         auto vz  = r->GetView<float>("z");
         std::set<int> seen;

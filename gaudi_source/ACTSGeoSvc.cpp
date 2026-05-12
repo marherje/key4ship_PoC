@@ -54,11 +54,14 @@ StatusCode ACTSGeoSvc::initialize() {
   // Struct holding extracted plane info.
   // TGeo positions are in cm; we convert to mm (* 10) immediately.
   struct PlaneInfo {
-    double z;          // global Z center [mm]  // beam axis is now Z
-    double halfX;      // half-size in X [mm]   // transverse
-    double halfY;      // half-size in Y [mm]   // transverse
-    double thickness;  // half-thickness in Z [mm]
-    int    plane;      // 0=StripX, 1=StripY, -1=pixel (SiPad)
+    double z;           // global Z center [mm]  // beam axis is now Z
+    double halfX;       // half-size in X [mm]   // transverse
+    double halfY;       // half-size in Y [mm]   // transverse
+    double thickness;   // half-thickness in Z [mm]
+    int    plane;       // 0=U/StripX, 1=V/StripY, -1=pixel (SiPad)
+    int    detID;       // 0=SiTarget, 1=SiPad, 2=MTC
+    int    station;     // station index; -1 for non-MTC
+    int    layerInDet;  // layer index within station (MTC) or detector
   };
 
   // Walk TGeo tree and collect sensitive volumes for the requested detector.
@@ -86,6 +89,9 @@ StatusCode ACTSGeoSvc::initialize() {
       } else if (detName == "SiPad") {
         isSensitive = (volName.find("SiPad_layer_") != std::string::npos) &&
                 (volName.find("_slice_4") != std::string::npos);
+      } else if (detName == "MTC") {
+        isSensitive = (volName.find("_slice_2") != std::string::npos ||
+                       volName.find("_slice_4") != std::string::npos);
       }
 
             bool isSliceContainer = (volName.find("_col") == std::string::npos);
@@ -96,20 +102,48 @@ StatusCode ACTSGeoSvc::initialize() {
           TGeoBBox* box    = dynamic_cast<TGeoBBox*>(vol->GetShape());
           if (box) {
             PlaneInfo pi;
-            // TGeo uses cm; convert to mm (* 10)
-            pi.z         = tr[2]        * 10.0;  // Z translation (beam axis)
-            pi.halfX     = box->GetDX() * 10.0;  // transverse X
-            pi.halfY     = box->GetDY() * 10.0;  // transverse Y
-            pi.thickness = box->GetDZ() * 10.0;  // thickness along Z
+            pi.z         = tr[2]        * 10.0;
+            pi.halfX     = box->GetDX() * 10.0;
+            pi.halfY     = box->GetDY() * 10.0;
+            pi.thickness = box->GetDZ() * 10.0;
+            pi.plane      = -1;
+            pi.detID      = -1;
+            pi.station    = -1;
+            pi.layerInDet = -1;
+
+            // Helper: parse integer after tag, stopping at next '_'
+            auto parseIntAfter = [&](const std::string& s,
+                                     const std::string& tag) -> int {
+              auto pos = s.find(tag);
+              if (pos == std::string::npos) return -1;
+              pos += tag.size();
+              auto end = s.find('_', pos);
+              return std::stoi(s.substr(pos, end == std::string::npos
+                                              ? std::string::npos
+                                              : end - pos));
+            };
 
             if (detName == "SiTarget") {
-              if (volName.find("slice_2") != std::string::npos)
-                pi.plane = 0;
-              else if (volName.find("slice_4") != std::string::npos)
-                pi.plane = 1;
+              pi.detID      = 0;
+              pi.station    = -1;
+              pi.layerInDet = parseIntAfter(volName, "SiTarget_layer_");
+              if (volName.find("slice_2") != std::string::npos)      pi.plane = 0;
+              else if (volName.find("slice_4") != std::string::npos) pi.plane = 1;
             } else if (detName == "SiPad") {
-              if (volName.find("slice_4") != std::string::npos)
-                pi.plane = -1;
+              pi.detID      = 1;
+              pi.station    = -1;
+              pi.layerInDet = parseIntAfter(volName, "SiPad_layer_");
+              pi.plane      = -1;
+            } else if (detName == "MTC") {
+              pi.detID   = 2;
+              pi.plane   = (volName.find("_slice_2") != std::string::npos) ? 0 : 1;
+              pi.station = volName.find("MTC40") != std::string::npos ? 0
+                         : volName.find("MTC50") != std::string::npos ? 1 : 2;
+              auto pos_l = volName.find("_layer_");
+              auto pos_s = volName.find("_slice_", pos_l);
+              if (pos_l != std::string::npos && pos_s != std::string::npos)
+                pi.layerInDet = std::stoi(volName.substr(pos_l + 7,
+                                                          pos_s - (pos_l + 7)));
             }
 
             planes.push_back(pi);
@@ -130,8 +164,8 @@ StatusCode ACTSGeoSvc::initialize() {
     return planes;
   };
 
-  // Detector names in X order (SiTarget more negative, SiPad less negative)
-  const std::vector<std::string> detNames = {"SiTarget", "SiPad"};
+  // Detector names in Z order (SiTarget most upstream, MTC most downstream)
+  const std::vector<std::string> detNames = {"SiTarget", "SiPad", "MTC"};
 
   // Collect ALL planes from ALL detectors into a single flat list.
   // This avoids CuboidVolumeBuilder multi-volume offset bugs.
@@ -154,6 +188,9 @@ StatusCode ACTSGeoSvc::initialize() {
       info() << "[ACTSGeoSvc]   plane z=" << pi.z
              << " halfX=" << pi.halfX << " halfY=" << pi.halfY
              << " thickness=" << pi.thickness
+             << " detID=" << pi.detID
+             << " station=" << pi.station
+             << " layer=" << pi.layerInDet
              << " plane=" << pi.plane << endmsg;
       // Track largest detector half-sizes for volume bounds
       globalHalfX = std::max(globalHalfX, pi.halfX);
@@ -194,10 +231,16 @@ StatusCode ACTSGeoSvc::initialize() {
     const auto& pi = allPlanes[i];
 
     Acts::Transform3 transform = Acts::Transform3::Identity();
-    // First rotate so surface normal points in X (avoids theta=0 singularity)
-    transform.rotate(rot90Y);
-    // Swap Z→X: beam coordinate goes into X for ACTS internal convention.
-    // Surface normal already points in X (from rot90Y). Center at (z, 0, 0).
+    // For SiTarget/SiPad: plain rot90Y maps surface normal to beam (ACTS X).
+    // For MTC SciFi: R_X(∓α)·rot90Y tilts eBoundLoc0 to stereo direction
+    // x∓y·tan(α), matching CartesianStripXStereo's strip_centre_at_y0.
+    Acts::RotationMatrix3 surfaceRot = rot90Y;
+    if (pi.detID == 2) {
+      const double alpha_rad = m_mtcStereoAngle.value() * M_PI / 180.0;
+      surfaceRot = Eigen::AngleAxisd(pi.plane == 0 ? +alpha_rad : -alpha_rad,
+                       Acts::Vector3::UnitX()).toRotationMatrix() * rot90Y;
+    }
+    transform.rotate(surfaceRot);
     transform.pretranslate(Acts::Vector3(pi.z, 0.0, 0.0));
 
     // Bounds in the local XY plane (transverse to beam)
@@ -323,6 +366,19 @@ StatusCode ACTSGeoSvc::initialize() {
               return a->center(m_gctx).x() < b->center(m_gctx).x();
             });
 
+  // allPlanes sorted by z matches m_allSurfaces sorted by ACTS-X — build map.
+  if (allPlanes.size() == m_allSurfaces.size()) {
+    for (std::size_t i = 0; i < allPlanes.size(); ++i) {
+      const auto& pi = allPlanes[i];
+      m_surfaceByAddressMap[{pi.detID, pi.station, pi.layerInDet, pi.plane}]
+          = m_allSurfaces[i];
+    }
+  } else {
+    warning() << "[ACTSGeoSvc] allPlanes.size()=" << allPlanes.size()
+              << " != m_allSurfaces.size()=" << m_allSurfaces.size()
+              << " — surfaceByAddress map not populated." << endmsg;
+  }
+
   info() << "[ACTSGeoSvc] TrackingGeometry built. Total surfaces: "
          << m_allSurfaces.size() << endmsg;
 
@@ -347,6 +403,12 @@ const Acts::TrackingGeometry& ACTSGeoSvc::trackingGeometry() const {
 
 const std::vector<const Acts::Surface*>& ACTSGeoSvc::allSurfaces() const {
   return m_allSurfaces;
+}
+
+const Acts::Surface* ACTSGeoSvc::surfaceByAddress(
+    int detID, int station, int layer, int plane) const {
+  auto it = m_surfaceByAddressMap.find({detID, station, layer, plane});
+  return (it != m_surfaceByAddressMap.end()) ? it->second : nullptr;
 }
 
 const Acts::GeometryContext& ACTSGeoSvc::geometryContext() const {

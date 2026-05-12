@@ -11,8 +11,10 @@ if not os.path.isfile(compact_path):
 
 SIM = DD4hepSimulation()
 
+numberOfEvents = 10000
+
 SIM.runType        = "run"
-SIM.numberOfEvents = 10
+SIM.numberOfEvents = numberOfEvents
 SIM.skipNEvents    = 0
 
 SIM.compactFile = str(compact_path)
@@ -21,7 +23,7 @@ SIM._compactFile = SIM.compactFile
 particle = "mu-"
 energy = 75
 
-SIM.outputFile     = f"output_{particle}_xyz_1_-42.5_-1000_dir_0_0_1_E{energy}.edm4hep.root"
+SIM.outputFile     = f"output_{particle}_xyz_1_-42.5_-1000_dir_0_0_1_E{energy}_{numberOfEvents}events.edm4hep.root"
 
 
 print("COMPACT FILE =", SIM.compactFile)

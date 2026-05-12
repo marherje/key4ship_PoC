@@ -41,6 +41,7 @@ gaudi_add_module(SND_reco
     gaudi_source/ACTSProtoTracker.cpp
     gaudi_source/SiTargetMeasConverter.cpp
     gaudi_source/SiPadMeasConverter.cpp
+    gaudi_source/MTCSciFiMeasConverter.cpp
   LINK
     Gaudi::GaudiKernel
     k4FWCore::k4FWCore
