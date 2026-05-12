@@ -46,10 +46,10 @@ dig_2.Threshold = 0.5
 dig_2.DebugFrequency = 500
 
 # # Digi SciFi
-# mip_3 = GeV2MIPConversion("GeV2MIP_MTCSciFi")
-# mip_3.InputCollection  = "MTCSciFiHitsWindowed"
-# mip_3.OutputCollection = "MTCSciFiHitsMIP"
-# mip_3.MIPValue = 0.0002
+mip_3 = GeV2MIPConversion("GeV2MIP_MTCSciFi")
+mip_3.InputCollection  = "MTCSciFiHitsWindowed"
+mip_3.OutputCollection = "MTCSciFiHitsMIP"
+mip_3.MIPValue = 2e-3*0.135
 
 # SciFi Digitizer: light attenuation + Poisson + SiPM saturation + QDC
 # Geometry and physics parameters from SND_compact.xml / FairRoot MTCDetHit model.
@@ -73,6 +73,7 @@ scifi_digi.QDC_A           =   0.172
 scifi_digi.QDC_B           =  -1.31
 scifi_digi.QDC_sigmaA      =   0.006
 scifi_digi.QDC_sigmaB      =   0.33
+scifi_digi.DebugFrequency  =   1
 
 # Digi MTC Scintillator (15 mm thick plastic pads — plain MIP threshold, no fiber model)
 mip_4 = GeV2MIPConversion("GeV2MIP_MTCScint")
@@ -90,6 +91,6 @@ dig_4.Threshold = 0.5
 ApplicationMgr(
     EvtSel  = "NONE",
     EvtMax  = -1,
-    TopAlg  = [mip_1, mip_2, dig_1, dig_2, scifi_digi, mip_4, dig_4],
+    TopAlg  = [mip_1, mip_2, dig_1, dig_2, mip_3, scifi_digi, mip_4, dig_4],
     ExtSvc  = [iosvc]
 )
