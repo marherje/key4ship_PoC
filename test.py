@@ -1,7 +1,7 @@
 import os
 from DDSim.DD4hepSimulation import DD4hepSimulation
 from g4units import mm, GeV
-gun_direction = (0, 0, 1) 
+gun_direction = (0, 0, 1)
 gun_position = (1 * mm, -42.5 * mm, -1000 * mm)
 
 compact_path = "simulation/geometry/SND_compact.xml"
@@ -11,7 +11,7 @@ if not os.path.isfile(compact_path):
 
 SIM = DD4hepSimulation()
 
-numberOfEvents = 10000
+numberOfEvents = 1000
 
 SIM.runType        = "run"
 SIM.numberOfEvents = numberOfEvents

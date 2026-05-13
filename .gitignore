@@ -19,3 +19,6 @@ graphify/
 CLAUDE.md
 graphify-out/
 install/
+gaudi_jobs/*/*.txt
+gaudi_jobs/muon_10k_pipeline/
+gaudi_jobs/*/plots/
