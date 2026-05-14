@@ -1,0 +1,28 @@
+<detector name="MTC" type="MTCDetector" vis="EcalVis" id="3"
+          readout="MTCDetHits" field_y="MTC_BFieldY">
+
+  <type_flags type="DetType_TRACKER + DetType_BARREL + DetType_STRIP"/>
+
+  <!-- Layer template shared by all three stations -->
+  <layer repeat="MTC_NLayers">
+    <slice material="Iron"         thickness="MTC_FeThickness"        sensitive="false" vis="TungstenVis"/>
+    <slice material="Iron"         thickness="MTC_InnerIronThickness"  sensitive="false" vis="TungstenVis"/>
+    <slice material="Silicon"      thickness="MTC_SciFiThickness"      sensitive="true"  plane="0" vis="SiVis"/>
+    <slice material="Air"          thickness="MTC_XY_plane_gap"        sensitive="false" vis="AirVis"/>
+    <slice material="Silicon"      thickness="MTC_SciFiThickness"      sensitive="true"  plane="1" vis="SiVis"/>
+    <slice material="Iron"         thickness="MTC_InnerIronThickness"  sensitive="false" vis="TungstenVis"/>
+    <slice material="Scintillator" thickness="MTC_ScintThickness"      sensitive="true"  plane="2" vis="SiVis"/>
+  </layer>
+
+  <!-- Per-station transverse dimensions and Z position -->
+  <station name="MTC40" station_id="0"
+           env_width="MTC40_env_width" env_height="MTC40_env_height"
+           z_position="MTC40_z_position" fiber_angle="MTC_fiber_angle_deg"/>
+  <station name="MTC50" station_id="1"
+           env_width="MTC50_env_width" env_height="MTC50_env_height"
+           z_position="MTC50_z_position" fiber_angle="MTC_fiber_angle_deg"/>
+  <station name="MTC60" station_id="2"
+           env_width="MTC60_env_width" env_height="MTC60_env_height"
+           z_position="MTC60_z_position" fiber_angle="MTC_fiber_angle_deg"/>
+
+</detector>

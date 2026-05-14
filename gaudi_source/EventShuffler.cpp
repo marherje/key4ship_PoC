@@ -30,15 +30,19 @@ public:
       const auto& delays  = m_delays.value();
       const auto& colsT   = m_collsSiTarget.value();
       const auto& colsP   = m_collsSiPad.value();
+      const auto& colsMTC = m_collsMTC.value();
 
       if (files.size() != ids.size()   ||
           files.size() != delays.size() ||
           files.size() != colsT.size()  ||
-          files.size() != colsP.size()) {
-        error() << "[EventShuffler] InputFiles, SourceIDs, Delays, CollectionsSiTarget"
-                << " and CollectionsSiPad must all have the same size. Got: "
+          files.size() != colsP.size()  ||
+          files.size() != colsMTC.size()) {
+        error() << "[EventShuffler] InputFiles, SourceIDs, Delays, CollectionsSiTarget,"
+                << " CollectionsSiPad, CollectionsMTC"
+                << " must all have the same size. Got: "
                 << files.size()  << ", " << ids.size()   << ", "
                 << delays.size() << ", " << colsT.size() << ", " << colsP.size()
+                << ", " << colsMTC.size()
                 << endmsg;
         return StatusCode::FAILURE;
       }
@@ -73,6 +77,8 @@ public:
       const auto& delays  = m_delays.value();
       const auto& colsT   = m_collsSiTarget.value();
       const auto& colsP   = m_collsSiPad.value();
+      const auto& colsMTC = m_collsMTC.value();
+      const int   planeOff = m_mtcPlaneOffset.value();
 
       // Quick scan to get event counts per source (needed for exhaustion warning).
       std::vector<size_t> nEventsVec(files.size());
@@ -105,8 +111,9 @@ public:
         {
           auto firstFrame = podio::Frame(reader.readEntry("events", 0));
           bool ok = true;
-          ok &= validateCollection(firstFrame, colsT[i], "EventShuffler", msgStream());
-          ok &= validateCollection(firstFrame, colsP[i], "EventShuffler", msgStream());
+          ok &= validateCollection(firstFrame, colsT[i],   "EventShuffler", msgStream());
+          ok &= validateCollection(firstFrame, colsP[i],   "EventShuffler", msgStream());
+          ok &= validateCollection(firstFrame, colsMTC[i], "EventShuffler", msgStream());
           if (!ok) {
             error() << "[EventShuffler] Validation failed for file: "
                     << files[i] << ". Aborting." << endmsg;
@@ -129,8 +136,10 @@ public:
 
           const auto& hitsTarget =
               frame.get<edm4hep::SimCalorimeterHitCollection>(colsT[i]);
-          const auto& hitsPad  =
+          const auto& hitsPad =
               frame.get<edm4hep::SimCalorimeterHitCollection>(colsP[i]);
+          const auto& hitsMTC =
+              frame.get<edm4hep::SimCalorimeterHitCollection>(colsMTC[i]);
 
           auto accum = [&](const edm4hep::SimCalorimeterHitCollection& hits,
                            std::map<uint64_t, std::vector<ContribData>>& buf) {
@@ -156,7 +165,32 @@ public:
           };
 
           accum(hitsTarget, m_bufferSiTarget);
-          accum(hitsPad,  m_bufferSiPad);
+          accum(hitsPad,    m_bufferSiPad);
+
+          // Route MTC hits to SciFi or Scint buffer based on 'plane' field in cell ID.
+          // ID layout: system:8,station:2,layer:8,slice:4,plane:2,...
+          // plane 0 = SciFi U, plane 1 = SciFi V, plane 2 = Scint.
+          for (const auto& hit : hitsMTC) {
+            const int plane = static_cast<int>((hit.getCellID() >> planeOff) & 0x3);
+            auto& buf = (plane < 2) ? m_bufferMTCSciFi : m_bufferMTCScint;
+            auto& vec = buf[hit.getCellID()];
+            const auto& hp = hit.getPosition();
+            for (const auto& contrib : hit.getContributions()) {
+              const auto& sp = contrib.getStepPosition();
+              ContribData cd;
+              cd.energy    = contrib.getEnergy();
+              cd.time      = static_cast<float>(static_cast<double>(ev) * delay)
+                             + contrib.getTime();
+              cd.source_id = sourceID;
+              cd.stepX     = sp.x;
+              cd.stepY     = sp.y;
+              cd.stepZ     = sp.z;
+              cd.hitX      = hp.x;
+              cd.hitY      = hp.y;
+              cd.hitZ      = hp.z;
+              vec.push_back(cd);
+            }
+          }
         }
 
         if (nEvents < maxNEvents) {
@@ -206,50 +240,35 @@ public:
         return {std::move(hits), std::move(contribs), std::move(sourceIDs)};
       };
 
-      auto [outSiTarget, outSiTargetContribs, sourceIDsSiTarget] = buildColl(m_bufferSiTarget);
-      auto [outSiPad,  outSiPadContribs,  sourceIDsSiPad]  = buildColl(m_bufferSiPad);
-
-      const size_t nTarget = outSiTarget.size();
-      const size_t nPad  = outSiPad.size();
-      const size_t nContribTarget = outSiTargetContribs.size();
-      const size_t nContribPad  = outSiPadContribs.size();
+      auto [outSiTarget,  outSiTargetContribs,  sourceIDsSiTarget]  = buildColl(m_bufferSiTarget);
+      auto [outSiPad,    outSiPadContribs,    sourceIDsSiPad]    = buildColl(m_bufferSiPad);
+      auto [outMTCSciFi, outMTCSciFiContribs, sourceIDsMTCSciFi] = buildColl(m_bufferMTCSciFi);
+      auto [outMTCScint, outMTCScintContribs, sourceIDsMTCScint] = buildColl(m_bufferMTCScint);
 
       podio::ROOTWriter writer(m_outputFile.value());
       {
         podio::Frame outFrame;
         outFrame.put(std::move(outSiTarget),        m_outputCollSiTarget.value());
         outFrame.put(std::move(outSiTargetContribs), m_outputCollSiTarget.value() + "_Contributions");
-        outFrame.put(std::move(outSiPad),          m_outputCollSiPad.value());
-        outFrame.put(std::move(outSiPadContribs),  m_outputCollSiPad.value()  + "_Contributions");
-        outFrame.putParameter("SiTargetSourceIDs", sourceIDsSiTarget);
-        outFrame.putParameter("SiPadSourceIDs",  sourceIDsSiPad);
+        outFrame.put(std::move(outSiPad),           m_outputCollSiPad.value());
+        outFrame.put(std::move(outSiPadContribs),   m_outputCollSiPad.value()  + "_Contributions");
+        outFrame.put(std::move(outMTCSciFi),        m_outputCollMTCSciFi.value());
+        outFrame.put(std::move(outMTCSciFiContribs), m_outputCollMTCSciFi.value() + "_Contributions");
+        outFrame.put(std::move(outMTCScint),        m_outputCollMTCScint.value());
+        outFrame.put(std::move(outMTCScintContribs), m_outputCollMTCScint.value() + "_Contributions");
+        outFrame.putParameter("SiTargetSourceIDs",  sourceIDsSiTarget);
+        outFrame.putParameter("SiPadSourceIDs",     sourceIDsSiPad);
+        outFrame.putParameter("MTCSciFiSourceIDs",  sourceIDsMTCSciFi);
+        outFrame.putParameter("MTCScintSourceIDs",  sourceIDsMTCScint);
         writer.writeFrame(outFrame, "events");
       }
       writer.finish();
 
-      // DEBUG: print source_id distribution per detector
-      {
-        std::map<int, int> dist;
-        for (int id : sourceIDsSiTarget) dist[id]++;
-        std::string msg = "[EventShuffler] SiTarget source_id distribution: ";
-        for (const auto& [id, cnt] : dist)
-          msg += "source_id=" + std::to_string(id) + ": " + std::to_string(cnt) + " hits  ";
-        debug() << msg << endmsg;
-      }
-      {
-        std::map<int, int> dist;
-        for (int id : sourceIDsSiPad) dist[id]++;
-        std::string msg = "[EventShuffler] SiPad source_id distribution: ";
-        for (const auto& [id, cnt] : dist)
-          msg += "source_id=" + std::to_string(id) + ": " + std::to_string(cnt) + " hits  ";
-        debug() << msg << endmsg;
-      }
-
       info() << "[EventShuffler] Super-event written to: " << m_outputFile.value() << endmsg;
-      info() << "[EventShuffler] SiTarget cellIDs: " << nTarget << endmsg;
-      info() << "[EventShuffler] SiPad cellIDs: "  << nPad  << endmsg;
-      info() << "[EventShuffler] Total contributions SiTarget: " << nContribTarget << endmsg;
-      info() << "[EventShuffler] Total contributions SiPad: "  << nContribPad  << endmsg;
+      info() << "[EventShuffler] SiTarget cellIDs: "  << outSiTarget.size()  << endmsg;
+      info() << "[EventShuffler] SiPad cellIDs: "     << outSiPad.size()     << endmsg;
+      info() << "[EventShuffler] MTCSciFi cellIDs: "  << outMTCSciFi.size()  << endmsg;
+      info() << "[EventShuffler] MTCScint cellIDs: "  << outMTCScint.size()  << endmsg;
 
       return Gaudi::Algorithm::finalize();
     } catch (const std::exception& e) {
@@ -281,18 +300,29 @@ private:
       this, "CollectionsSiTarget", {}, "SiTarget collection name for each input file"};
   Gaudi::Property<std::vector<std::string>> m_collsSiPad{
       this, "CollectionsSiPad", {}, "SiPad collection name for each input file"};
+  Gaudi::Property<std::vector<std::string>> m_collsMTC{
+      this, "CollectionsMTC", {}, "MTCDetHits collection name for each input file"};
+  Gaudi::Property<int> m_mtcPlaneOffset{
+      this, "MTCPlaneOffset", 22,
+      "Bit offset of 'plane' field in MTCDetHits cell ID (system:8,station:2,layer:8,slice:4 = 22)"};
   Gaudi::Property<std::string> m_outputFile{
       this, "OutputFile", "shuffled.root", "Output super-event ROOT file"};
   Gaudi::Property<std::string> m_outputCollSiTarget{
       this, "OutputCollectionSiTarget", "SiTargetHitsMerged", "Output SiTarget collection name"};
   Gaudi::Property<std::string> m_outputCollSiPad{
       this, "OutputCollectionSiPad", "SiPadHitsMerged", "Output SiPad collection name"};
+  Gaudi::Property<std::string> m_outputCollMTCSciFi{
+      this, "OutputCollectionMTCSciFi", "MTCSciFiHitsMerged", "Output MTC SciFi collection name"};
+  Gaudi::Property<std::string> m_outputCollMTCScint{
+      this, "OutputCollectionMTCScint", "MTCScintHitsMerged", "Output MTC Scint collection name"};
   Gaudi::Property<int> m_maxEventsPerSource{
       this, "MaxEventsPerSource", 0,
       "Maximum number of events to read from each source (0 = no limit)"};
 
   mutable std::map<uint64_t, std::vector<ContribData>> m_bufferSiTarget;
   mutable std::map<uint64_t, std::vector<ContribData>> m_bufferSiPad;
+  mutable std::map<uint64_t, std::vector<ContribData>> m_bufferMTCSciFi;
+  mutable std::map<uint64_t, std::vector<ContribData>> m_bufferMTCScint;
 };
 
 DECLARE_COMPONENT(EventShuffler)

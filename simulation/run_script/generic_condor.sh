@@ -75,6 +75,8 @@ SIM.gun.direction  = gun_direction
 
 SIM.physicsList    = "${physlist}"
 
+SIM.action.mapActions["MTC"] = "SND_SciFiAction"
+
 EOF
 
     # --------------------------------------------------
@@ -82,12 +84,13 @@ EOF
     # --------------------------------------------------
 cat > ${steer_path}/${condorsh} <<EOF
 #!/bin/bash
+set -e
 
 echo "Starting job on \$(hostname)"
 
 source ${local}/../../init_key4hep.sh
-export LD_LIBRARY_PATH=${local}/../../install/lib64:${local}/../../install/lib:$LD_LIBRARY_PATH
-export PYTHONPATH=${local}/../../install/lib64:${local}/../../install/lib:${local}/../../install/python:$PYTHONPATH
+export LD_LIBRARY_PATH=${local}/../../install/lib64:${local}/../../install/lib:\$LD_LIBRARY_PATH
+export PYTHONPATH=${local}/../../install/lib64:${local}/../../install/lib:${local}/../../install/python:\$PYTHONPATH
 
 ddsim --steeringFile ${steer_path}/${scriptname} &> ${log_path}/${label}.log
 

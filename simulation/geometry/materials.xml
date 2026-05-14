@@ -39,4 +39,11 @@
     <fraction n="1.0" ref="W"/>
   </material>
 
+  <!-- Polyvinyltoluene plastic scintillator (BC-408 / EJ-200 equivalent) -->
+  <material name="Scintillator" state="solid">
+    <D unit="g/cm3" value="1.032"/>
+    <fraction n="0.915" ref="C"/>
+    <fraction n="0.085" ref="H"/>
+  </material>
+
 </materials>
