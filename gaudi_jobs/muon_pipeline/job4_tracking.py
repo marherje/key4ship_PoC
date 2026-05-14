@@ -6,7 +6,7 @@ from Gaudi.Configuration import DEBUG, INFO
 # ── MTC outer iron magnetic field map ─────────────────────────────────────────
 # MTC_BFIELD_Y must match MTC_BFieldY in simulation/geometry/SND_compact.xml.
 # All geometry constants below must mirror the SND_compact.xml <define> block.
-MTC_BFIELD_Y    = 0.0    # Tesla
+MTC_BFIELD_Y    = 1.7    # Tesla
 MTC_FE_THICK    = 50.0   # mm — outer iron absorber (slice 0 per layer)
 MTC_LAYER_THICK = 74.7   # mm — 50+3+1.35+1+1.35+3+15
 MTC_N_LAYERS    = 15
