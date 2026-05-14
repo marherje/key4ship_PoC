@@ -6,8 +6,10 @@
 #include "Acts/Geometry/TrackingGeometry.hpp"
 #include "Acts/MagneticField/MagneticFieldContext.hpp"
 #include "Acts/Surfaces/Surface.hpp"
+#include <map>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -24,13 +26,22 @@ public:
   // ISNDGeoSvc extensions
   const std::vector<const Acts::Surface*>& allSurfaces() const override;
   const Acts::GeometryContext& geometryContext() const override;
+  const Acts::Surface* surfaceByAddress(
+      int detID, int station, int layer, int plane) const override;
 
 private:
   Gaudi::Property<std::string> m_compactFile{
       this, "CompactFile", "",
       "Path to DD4hep compact XML"};
 
+  Gaudi::Property<double> m_mtcStereoAngle{
+      this, "MTCStereoAngle", 5.0,
+      "MTC SciFi stereo half-angle [degrees]"};
+
   std::shared_ptr<const Acts::TrackingGeometry> m_trackingGeometry;
   std::vector<const Acts::Surface*>             m_allSurfaces;
   Acts::GeometryContext                         m_gctx;
+
+  // key = (detID, station, layerInDet, plane)
+  std::map<std::tuple<int,int,int,int>, const Acts::Surface*> m_surfaceByAddressMap;
 };

@@ -72,6 +72,40 @@
     <constant name="SiTarget_sensor_gap"      value="1.0*mm"/>    <!-- gap between sensors -->
     <constant name="SiTarget_ncols"           value="4"/>
     <constant name="SiTarget_nrows"           value="2"/>
+
+    <!-- MTC shared layer constants (hardcoded values from MTCDetector.h unless noted) -->
+    <constant name="MTC_FeThickness"         value="50.0*mm"/>  <!-- outer iron absorber, PoC default -->
+    <constant name="MTC_InnerIronThickness"  value="3.0*mm"/>   <!-- lowerIronThick = upperIronThick -->
+    <constant name="MTC_SciFiThickness"      value="1.35*mm"/>  <!-- fiberMatThick per plane -->
+    <constant name="MTC_XY_plane_gap"        value="1.0*mm"/>   <!-- airGap between U and V planes -->
+    <constant name="MTC_ScintThickness"      value="15.0*mm"/>
+    <constant name="MTC_layer_gap"           value="0.0*mm"/>
+    <constant name="MTC_NLayers"             value="15"/>
+    <constant name="MTC_fiber_angle_deg"     value="5"/>        <!-- dimensionless degrees, converted in plugin -->
+    <constant name="MTC_ScintCellSize"       value="50.0*mm"/>
+    <constant name="MTC_SciFiChannelSize"    value="1.0*mm"/>   <!-- PoC placeholder, tune later -->
+    <constant name="MTC_max_env_width"       value="600.0*mm"/>
+
+    <constant name="MTC_layer_thickness" value="MTC_FeThickness + MTC_InnerIronThickness + MTC_SciFiThickness + MTC_XY_plane_gap + MTC_SciFiThickness + MTC_InnerIronThickness + MTC_ScintThickness + MTC_layer_gap"/>
+    <constant name="MTC_total_length"    value="MTC_NLayers * MTC_layer_thickness"/>
+
+    <!-- Per-station transverse dimensions -->
+    <constant name="MTC40_env_width"     value="400.0*mm"/>
+    <constant name="MTC40_env_height"    value="400.0*mm"/>
+    <constant name="MTC50_env_width"     value="500.0*mm"/>
+    <constant name="MTC50_env_height"    value="500.0*mm"/>
+    <constant name="MTC60_env_width"     value="600.0*mm"/>
+    <constant name="MTC60_env_height"    value="600.0*mm"/>
+
+    <!-- Z centres: gap of 600 mm after SiPad downstream face, stations back-to-back.
+         MTC_inter_station_gap avoids the 0.2 mm envelope overlap (2 × 0.1 mm plugin safety). -->
+    <constant name="MTC_inter_station_gap" value="1.0*mm"/>
+    <constant name="MTC40_z_position"    value="Ecal_dim_z/2.0 + 600.0*mm + MTC_total_length/2.0"/>
+    <constant name="MTC50_z_position"    value="MTC40_z_position + MTC_total_length + MTC_inter_station_gap"/>
+    <constant name="MTC60_z_position"    value="MTC50_z_position + MTC_total_length + MTC_inter_station_gap"/>
+
+    <!-- Magnetic field in MTC outer iron absorbers -->
+    <constant name="MTC_BFieldY" value="1.7*tesla"/>
   </define>
 
   <limits>
@@ -102,6 +136,34 @@
       <id>system:8,layer:8,slice:4,x:9,y:9</id>
     </readout>
 
+    <!-- MTC unified readout: plane=0 (SciFi U), plane=1 (SciFi V), plane=2 (Scint).
+         CartesianStripX writes to 'strip'; CartesianGridXY writes to 'x','y'.
+         For SciFi hits: strip=channel, x=0, y=0.
+         For Scint hits: strip=0, x=cell_x, y=cell_y.
+         Downstream split happens in EventShuffler based on the plane field. -->
+    <readout name="MTCDetHits">
+      <segmentation type="MultiSegmentation" key="plane">
+        <segmentation type="CartesianStripXStereo"
+                      key_value="0"
+                      strip_size_x="MTC_SciFiChannelSize"
+                      offset_x="-(MTC_max_env_width/2.0)+0.001*mm"
+                      stereo_angle="5.0"/>
+        <segmentation type="CartesianStripXStereo"
+                      key_value="1"
+                      strip_size_x="MTC_SciFiChannelSize"
+                      offset_x="-(MTC_max_env_width/2.0)+0.001*mm"
+                      stereo_angle="-5.0"/>
+        <segmentation type="CartesianGridXY"
+                      key_value="2"
+                      grid_size_x="MTC_ScintCellSize"
+                      grid_size_y="MTC_ScintCellSize"
+                      offset_x="-(MTC_max_env_width/2.0)+0.001*mm"
+                      offset_y="-(MTC_max_env_width/2.0)+0.001*mm"/>
+      </segmentation>
+      <!-- plane:2 = 2 bits for values 0,1,2; strip for SciFi; x,y for Scint -->
+      <id>system:8,station:2,layer:8,slice:4,plane:2,strip:14,x:9,y:9</id>
+    </readout>
+
     <readout name="SiTargetHits">
       <!-- MultiSegmentation selects strip direction based on plane field:
            plane=0 → CartesianStripX (measures X coordinate)
@@ -123,8 +185,10 @@
   </readouts>
 
   <detectors>
-    <include ref="SiPadDetector.xml"/> 
+    <include ref="SiPadDetector.xml"/>
     <include ref="SiTarget.xml"/>
+    <include ref="MTCDetector.xml"/>
   </detectors>
+
 
 </lccdd>

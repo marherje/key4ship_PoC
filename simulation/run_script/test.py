@@ -7,10 +7,10 @@ decoder = ROOT.dd4hep.DDSegmentation.BitFieldCoder("system:8,layer:8,slice:4,pla
 # Try new podio API
 try:
     from podio import reading
-    reader = reading.get_reader("data/output_mu-_xyz_-1000_0.1_0.1_E50.edm4hep.root")
+    reader = reading.get_reader("data/output_e-_xyz_1_-82.5_-1000_dir_0_0.05_1_E50.edm4hep.root")
 except:
     import podio
-    reader = podio.root_io.Reader(" data/output_mu-_xyz_-1000_0.1_0.1_E50.edm4hep.root")
+    reader = podio.root_io.Reader("data/output_e-_xyz_1_-82.5_-1000_dir_0_0.05_1_E50.edm4hep.root")
 
 for frame in reader.get("events"):
     hits = frame.get("SiTargetHits")
