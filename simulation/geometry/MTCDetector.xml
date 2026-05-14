@@ -1,5 +1,5 @@
 <detector name="MTC" type="MTCDetector" vis="EcalVis" id="3"
-          readout="MTCDetHits">
+          readout="MTCDetHits" field_y="MTC_BFieldY">
 
   <type_flags type="DetType_TRACKER + DetType_BARREL + DetType_STRIP"/>
 

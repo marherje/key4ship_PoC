@@ -3,6 +3,38 @@ from Configurables import ACTSGeoSvc, SiTargetMeasConverter, \
                           SiPadMeasConverter, MTCSciFiMeasConverter, ACTSProtoTracker
 from Gaudi.Configuration import DEBUG, INFO
 
+# ── MTC outer iron magnetic field map ─────────────────────────────────────────
+# MTC_BFIELD_Y must match MTC_BFieldY in simulation/geometry/SND_compact.xml.
+# All geometry constants below must mirror the SND_compact.xml <define> block.
+MTC_BFIELD_Y    = 0.0    # Tesla
+MTC_FE_THICK    = 50.0   # mm — outer iron absorber (slice 0 per layer)
+MTC_LAYER_THICK = 74.7   # mm — 50+3+1.35+1+1.35+3+15
+MTC_N_LAYERS    = 15
+ECAL_DIM_Z      = 20 * (3.5 + 11.0)   # 290 mm  (Ecal_NLayers × Ecal_LayerThickness)
+MTC_TOTAL_LEN   = MTC_N_LAYERS * MTC_LAYER_THICK   # 1120.5 mm
+MTC_INTER_GAP   = 1.0    # mm
+
+MTC40_Z = ECAL_DIM_Z / 2.0 + 600.0 + MTC_TOTAL_LEN / 2.0
+MTC50_Z = MTC40_Z + MTC_TOTAL_LEN + MTC_INTER_GAP
+MTC60_Z = MTC50_Z + MTC_TOTAL_LEN + MTC_INTER_GAP
+
+# Station (z_center, ACTS-Y half-size, ACTS-Z half-size) in mm + 1 mm margin.
+# ACTS coords: x = beam axis (= DD4hep Z), y = DD4hep Y, z = DD4hep X.
+_station_params = [
+    (MTC40_Z, 201.0, 201.0),
+    (MTC50_Z, 251.0, 251.0),
+    (MTC60_Z, 301.0, 301.0),
+]
+# Flat list: [xlo, xhi, ylo, yhi, zlo, zhi, by] per outer iron slab
+_iron_ranges = []
+for _z_ctr, _yhalf, _zhalf in _station_params:
+    _front = _z_ctr - MTC_TOTAL_LEN / 2.0
+    for _layer in range(MTC_N_LAYERS):
+        _lo = _front + _layer * MTC_LAYER_THICK
+        _hi = _lo + MTC_FE_THICK
+        _iron_ranges.extend([_lo, _hi, -_yhalf, _yhalf, -_zhalf, _zhalf, MTC_BFIELD_Y])
+# ──────────────────────────────────────────────────────────────────────────────
+
 iosvc = IOSvc()
 iosvc.Input          = "timewindows.edm4hep.root"
 iosvc.Output         = "tracks.edm4hep.root"
@@ -52,9 +84,7 @@ proto.InputSiPad       = "SiPadMeasurements"
 proto.InputMTC         = "MTCSciFiMeasurements"
 proto.MTCStereoAngle   = 5.0
 proto.OutputCollection = "ACTSTracks"
-proto.BFieldX          = 0.0
-proto.BFieldY          = 0.0
-proto.BFieldZ          = 0.0
+proto.IronFieldRanges  = _iron_ranges  # MultiRangeBField in MTC outer iron slabs
 # Hough Transform automatic seeding
 proto.AutoSeed         = True
 proto.MaxSeeds         = 3

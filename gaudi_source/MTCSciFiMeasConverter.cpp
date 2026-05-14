@@ -173,11 +173,10 @@ StatusCode MTCSciFiMeasConverter::execute(const EventContext&) const {
       }
 
       // Decode position from hit.
-      // IMPORTANT: position.x from SND_SciFiAction is in ROOT cm — multiply
-      // by 10 to get mm.  position.y is the truth energy-weighted step-Y used
-      // only by SciFiDigitizer for light propagation; must NOT be used here.
+      // position.x from SND_SciFiAction is in mm (TGeo cm * 10 applied at source).
+      // position.y is the truth energy-weighted step-Y for SciFiDigitizer only.
       const auto& pos = hit.getPosition();
-      const double localCoord = pos.x * 10.0;  // ROOT cm → mm
+      const double localCoord = pos.x;  // mm
 
       // Find matching ACTS surface via detector address lookup.
       const Acts::Surface* surf = m_geoSvc->surfaceByAddress(2, station, layer, plane);
