@@ -63,14 +63,14 @@ public:
     auto* hit = coll->findByKey<Geant4Calorimeter::Hit>(cid);
 
     if (!hit) {
-      // Initial position: strip-center X from segmentation, step-midpoint Y/Z
+      // Initial position: strip-center X from segmentation (TGeo cm → mm), step-midpoint Y/Z
       const G4ThreeVector mid =
           0.5 * (step->GetPreStepPoint()->GetPosition() +
                  step->GetPostStepPoint()->GetPosition());  // global mm
       const Position seg_p = m_segmentation.position(cid); // local→approx global for centred placement
       hit = new Geant4Calorimeter::Hit();
       hit->cellID   = cid;
-      hit->position = Position(seg_p.x(), mid.y(), mid.z());
+      hit->position = Position(seg_p.x() * 10.0, mid.y(), mid.z());
       coll->add(cid, hit);
     }
 

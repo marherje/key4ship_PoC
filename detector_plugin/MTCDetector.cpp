@@ -6,15 +6,47 @@
 //  Layer structure per station:
 //    outer iron | inner iron | SciFi U (+alpha) | gap | SciFi V (-alpha)
 //    | inner iron | scintillator
+//
+//  If the detector XML has a field_y attribute (e.g., 1.0*tesla),
+//  a uniform By field is added to the global DD4hep field for each
+//  outer iron absorber slab (slice 0, 50 mm thick per layer).
 //====================================================================
 #include "DD4hep/DetFactoryHelper.h"
+#include "DD4hep/FieldTypes.h"
 #include "DD4hep/Printout.h"
 #include "XML/Utilities.h"
 #include <cmath>
 #include <string>
+#include <vector>
 
 using namespace dd4hep;
 
+// ---------------------------------------------------------------------------
+// Field object: returns By only inside the registered outer iron slabs
+// ---------------------------------------------------------------------------
+namespace {
+  struct MTCIronField : public CartesianField::Object {
+    struct Slab { double zlo, zhi, xhalf, yhalf; };
+    double            m_by = 0.0;
+    std::vector<Slab> m_slabs;
+
+    void fieldComponents(const double* pos, double* field) override {
+      double z  = pos[2];
+      double ax = std::abs(pos[0]);
+      double ay = std::abs(pos[1]);
+      for (const auto& s : m_slabs) {
+        if (z >= s.zlo && z <= s.zhi && ax <= s.xhalf && ay <= s.yhalf) {
+          field[1] += m_by;
+          return;
+        }
+      }
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Detector factory
+// ---------------------------------------------------------------------------
 dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
                                   xml_h element,
                                   dd4hep::SensitiveDetector sens) {
@@ -28,6 +60,13 @@ dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
   xml::setDetectorTypeFlag(element, sdet);
 
   Material mat_air = description.air();
+
+  // -- Read optional magnetic field strength (0 = no field) -----------------
+  bool   hasField = x_det.hasAttr(_Unicode(field_y));
+  double bFieldY  = hasField ? x_det.attr<double>(_Unicode(field_y)) : 0.0;
+
+  // Outer iron slabs for the field map (populated during build)
+  std::vector<MTCIronField::Slab> ironSlabs;
 
   // -- Parent assembly gives sdet a valid placement -------------------------
   // Assembly auto-sizes to contain all station envelopes placed inside it.
@@ -128,6 +167,13 @@ dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
           if (is_sens && x_slice.hasAttr(_Unicode(plane)))
             plane_id = x_slice.attr<int>(_Unicode(plane));
 
+          // Slice 0 = outer iron absorber: register for magnetic field
+          if (slice_in_layer == 0 && bFieldY != 0.0) {
+            double slab_lo = z0 + cur_z;           // global Z start of outer iron
+            double slab_hi = slab_lo + thick;       // global Z end
+            ironSlabs.push_back({slab_lo, slab_hi, env_w / 2.0 + 1.0, env_h / 2.0 + 1.0});
+          }
+
           std::string slice_name   = layer_name + "_slice_" + std::to_string(slice_in_layer);
           Material    mat          = description.material(mat_name);
           double      sl_center_z  = local_z + thick / 2.0;
@@ -135,9 +181,6 @@ dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
           // SciFi planes (plane 0 = U, plane 1 = V): use Para to encode the stereo
           // angle as a shear, avoiding envelope overflow from a pure Z-rotation.
           // All other slices remain rectangular.
-          // TGeoPara is available via <TGeoPara.h> (pulled in through Shapes.h).
-          // DD4hep has no Para wrapper in this version, so we build the ROOT shape
-          // directly and hand it to Solid. Angles are in degrees (TGeoPara convention).
           Solid sl_solid;
           if (plane_id == 0)
             sl_solid = Solid(new TGeoPara((slice_name + "_shape").c_str(),
@@ -161,8 +204,6 @@ dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
           PlacedVolume sl_pv = layer_vol.placeVolume(sl_vol,
                                  Transform3D(Position(0.0, 0.0, sl_center_z)));
           sl_pv.addPhysVolID("slice", slice_in_layer);
-          // All three plane types (0=SciFi U, 1=SciFi V, 2=Scint) encode 'plane'
-          // for MultiSegmentation dispatch in the unified MTCDetHits readout.
           if (plane_id >= 0)
             sl_pv.addPhysVolID("plane", plane_id);
 
@@ -176,6 +217,22 @@ dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
         cur_z += layer_thick;
       }
     }
+  }
+
+  // -- Add magnetic field in outer iron slabs to the global DD4hep field ----
+  if (bFieldY != 0.0 && !ironSlabs.empty()) {
+    auto* obj        = new MTCIronField();
+    obj->field_type  = CartesianField::MAGNETIC;
+    obj->m_by        = bFieldY;
+    obj->m_slabs     = std::move(ironSlabs);
+
+    CartesianField cf;
+    cf.assign(obj, name + "_BField", "magnetic");
+    description.field().add(cf);
+
+    dd4hep::printout(dd4hep::INFO, "MTCDetector",
+        "%s: By=%.2f T magnetic field registered in %zu outer iron slabs",
+        name.c_str(), bFieldY / dd4hep::tesla, obj->m_slabs.size());
   }
 
   return sdet;

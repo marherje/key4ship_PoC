@@ -103,6 +103,9 @@
     <constant name="MTC40_z_position"    value="Ecal_dim_z/2.0 + 600.0*mm + MTC_total_length/2.0"/>
     <constant name="MTC50_z_position"    value="MTC40_z_position + MTC_total_length + MTC_inter_station_gap"/>
     <constant name="MTC60_z_position"    value="MTC50_z_position + MTC_total_length + MTC_inter_station_gap"/>
+
+    <!-- Magnetic field in MTC outer iron absorbers -->
+    <constant name="MTC_BFieldY" value="1.7*tesla"/>
   </define>
 
   <limits>
@@ -186,5 +189,6 @@
     <include ref="SiTarget.xml"/>
     <include ref="MTCDetector.xml"/>
   </detectors>
+
 
 </lccdd>

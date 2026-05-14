@@ -22,3 +22,7 @@ install/
 gaudi_jobs/*/*.txt
 gaudi_jobs/muon_10k_pipeline/
 gaudi_jobs/*/plots/
+gaudi_jobs/*/*.root
+*.cxx
+*log*txt
+*.h

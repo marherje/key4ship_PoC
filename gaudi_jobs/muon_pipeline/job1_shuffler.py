@@ -7,8 +7,12 @@ from Configurables import EventShuffler
 
 shuffler = EventShuffler("EventShuffler")
 shuffler.InputFiles = [
-    "../../output_mu-_xyz_1_-42.5_-1000_dir_0_0_1_E75.edm4hep.root",
+    # "../../output_mu-_xyz_1_-42.5_-1000_dir_0_0_1_E75.edm4hep.root",
+    # "../../output_mu-_xyz_1_-42.5_-1000_dir_0_0_1_E75_1000events.edm4hep.root"
     # "../../output_e-_xyz_1_-82.5_-1000_dir_0_0_1_E75.edm4hep.root"
+    # "../../output_mu-_xyz_1_-42.5_-1000_dir_0_0_1_E30_100events.edm4hep.root"
+    # "../../output_mu-_xyz_1_-42.5_-1000_dir_0_0_1_E5_100events.edm4hep.root"
+    "../../output_mu-_xyz_1_-42.5_750_dir_0_0_1_E5_100only_mtc_events.edm4hep.root"
 ]
 shuffler.SourceIDs = [
     1,

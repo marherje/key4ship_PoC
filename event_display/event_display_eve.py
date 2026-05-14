@@ -15,6 +15,7 @@ Usage:
 import argparse
 import json
 import math
+import numpy as np
 import os
 import ROOT
 
@@ -180,7 +181,7 @@ def build_hits(eve, hits_file, window_id, config):
         layers_z   = det["layers_z_cm"]
         z_min = det.get("z_range", {}).get("min", float("-inf"))
         z_max = det.get("z_range", {}).get("max", float("inf"))
-
+        if len(layers_z) == 0: continue
         stereo_deg = det.get("stereo_deg", 0.0)
 
         xs, ys, zs, Es, srcs, planes = read_hits(
@@ -204,7 +205,7 @@ def build_hits(eve, hits_file, window_id, config):
             xc = xs[i] * mm2cm
             yc = ys[i] * mm2cm
             zc = zs[i] * mm2cm
-            snap_z = nearest_plane(zc, layers_z)
+            snap_z = nearest_plane(np.array([zc]) if type(zc) == float else zc, layers_z)
             if not (z_min <= snap_z <= z_max):
                 continue
             gs = make_box(f"{det_name}_hit_{i}",

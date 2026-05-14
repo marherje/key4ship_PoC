@@ -39,6 +39,7 @@
 // ACTS magnetic field
 #include "Acts/MagneticField/ConstantBField.hpp"
 #include "Acts/MagneticField/MagneticFieldContext.hpp"
+#include "Acts/MagneticField/MagneticFieldProvider.hpp"
 
 // ACTS calibration context
 #include "Acts/Utilities/CalibrationContext.hpp"
@@ -118,6 +119,43 @@ using SNDKalmanFitter = Acts::KalmanFitter<SNDPropagator,
                                            Acts::VectorMultiTrajectory>;
 
 // ---------------------------------------------------------------------------
+// IronSlabBField — By inside registered slabs, zero everywhere else.
+// Unlike Acts::MultiRangeBField, never returns MagneticFieldError for
+// positions outside all registered ranges (returns zero instead).
+// ---------------------------------------------------------------------------
+
+class IronSlabBField : public Acts::MagneticFieldProvider {
+public:
+  struct Cache {
+    explicit Cache(const Acts::MagneticFieldContext&) {}
+  };
+  struct Slab { double xlo, xhi, ylo, yhi, zlo, zhi, by; };
+
+  explicit IronSlabBField(std::vector<Slab> slabs) : m_slabs(std::move(slabs)) {}
+
+  Acts::MagneticFieldProvider::Cache makeCache(
+      const Acts::MagneticFieldContext& mctx) const override {
+    return Acts::MagneticFieldProvider::Cache(std::in_place_type<Cache>, mctx);
+  }
+
+  Acts::Result<Acts::Vector3> getField(
+      const Acts::Vector3& pos,
+      Acts::MagneticFieldProvider::Cache&) const override {
+    for (const auto& s : m_slabs) {
+      if (pos.x() >= s.xlo && pos.x() <= s.xhi &&
+          pos.y() >= s.ylo && pos.y() <= s.yhi &&
+          pos.z() >= s.zlo && pos.z() <= s.zhi) {
+        return Acts::Result<Acts::Vector3>::success(Acts::Vector3(0.0, s.by, 0.0));
+      }
+    }
+    return Acts::Result<Acts::Vector3>::success(Acts::Vector3::Zero());
+  }
+
+private:
+  std::vector<Slab> m_slabs;
+};
+
+// ---------------------------------------------------------------------------
 // ACTSProtoTracker
 // ---------------------------------------------------------------------------
 
@@ -153,6 +191,9 @@ private:
   Gaudi::Property<double> m_bFieldX{this, "BFieldX", 0.0, "BField X [T]"};
   Gaudi::Property<double> m_bFieldY{this, "BFieldY", 0.0, "BField Y [T]"};
   Gaudi::Property<double> m_bFieldZ{this, "BFieldZ", 0.0, "BField Z [T]"};
+  Gaudi::Property<std::vector<double>> m_ironFieldRanges{
+      this, "IronFieldRanges", {},
+      "Per-slab field: [xlo,xhi, ylo,yhi, zlo,zhi, by] x N slabs in ACTS coords [mm, T]"};
 
   // ---- Seed configuration (DD4hep convention: Z=beam) ----
   // SeedPositions: flat list of (x, y, z) triplets in mm.
@@ -867,10 +908,32 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
     // STEP 4: Build shared KF components (once per event)
     // =========================================================================
 
-    auto bField = std::make_shared<Acts::ConstantBField>(
-        Acts::Vector3(m_bFieldX.value() * Acts::UnitConstants::T,
-                      m_bFieldY.value() * Acts::UnitConstants::T,
-                      m_bFieldZ.value() * Acts::UnitConstants::T));
+    std::shared_ptr<Acts::MagneticFieldProvider> bField;
+    const auto& ironRanges = m_ironFieldRanges.value();
+    if (!ironRanges.empty() && ironRanges.size() % 7 == 0) {
+      // Build IronSlabBField: each entry covers one outer iron slab.
+      // Format per entry: [xlo,xhi, ylo,yhi, zlo,zhi, by] in [mm, T].
+      // ACTS coords: x = beam axis (= DD4hep Z), y = DD4hep Y, z = DD4hep X.
+      std::vector<IronSlabBField::Slab> slabs;
+      slabs.reserve(ironRanges.size() / 7);
+      for (std::size_t i = 0; i < ironRanges.size(); i += 7) {
+        slabs.push_back({
+          ironRanges[i+0] * Acts::UnitConstants::mm,
+          ironRanges[i+1] * Acts::UnitConstants::mm,
+          ironRanges[i+2] * Acts::UnitConstants::mm,
+          ironRanges[i+3] * Acts::UnitConstants::mm,
+          ironRanges[i+4] * Acts::UnitConstants::mm,
+          ironRanges[i+5] * Acts::UnitConstants::mm,
+          ironRanges[i+6] * Acts::UnitConstants::T
+        });
+      }
+      bField = std::make_shared<IronSlabBField>(std::move(slabs));
+    } else {
+      bField = std::make_shared<Acts::ConstantBField>(
+          Acts::Vector3(m_bFieldX.value() * Acts::UnitConstants::T,
+                        m_bFieldY.value() * Acts::UnitConstants::T,
+                        m_bFieldZ.value() * Acts::UnitConstants::T));
+    }
 
     // ---- SurfaceAccessor: maps SourceLink → Surface -------------------------
     struct SNDSurfaceAccessor {
