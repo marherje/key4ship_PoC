@@ -25,7 +25,7 @@ from g4units import mm, GeV
 # Gun configuration
 particle = "mu-"
 energy = 5  # GeV
-gun_position = (1 * mm, -42.5 * mm, 750 * mm)
+gun_position = (5 * mm, -82.5 * mm, 750 * mm)
 gun_direction = (0, 0, 1)
 
 # Simulation configuration
