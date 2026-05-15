@@ -472,7 +472,7 @@ std::vector<ACTSProtoTracker::SeedCandidate> ACTSProtoTracker::findSeeds(
     std::map<int, std::vector<const SNDMeasurement*>> mtcGroups;
     for (const auto& m : measurements) {
       if (m.detectorID != 2) continue;
-      int key = static_cast<int>(std::round(m.surface->center(gctx).x() / 10.0));
+      int key = static_cast<int>(std::round(m.surface->center(gctx).x() / 5.0));
       mtcGroups[key].push_back(&m);
     }
     for (const auto& [key, meas] : mtcGroups) {

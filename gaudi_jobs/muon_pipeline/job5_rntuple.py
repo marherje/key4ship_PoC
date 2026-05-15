@@ -1,5 +1,11 @@
 from k4FWCore import ApplicationMgr, IOSvc
 from Configurables import EDM4HEP2RNTuple
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "simulation" / "geometry"))
+from parse_geometry import SNDGeometry
+geo = SNDGeometry()
 
 iosvc = IOSvc()
 iosvc.Input = ["tracks.edm4hep.root"]
@@ -15,12 +21,10 @@ converter.Collections    = [
     "MTCScintHitsWindowed",
 ]
 converter.BitFields      = [
-    "system:8,layer:8,slice:4,plane:1,column:2,row:2,strip:14",
-    "system:8,layer:8,slice:4,x:9,y:9",
-    # MTCSciFi hits (plane=0,1): strip field carries the channel; x,y are 0
-    "system:8,station:2,layer:8,slice:4,plane:2,strip:14,x:9,y:9",
-    # MTCScint hits (plane=2): x,y carry the cell; strip is 0
-    "system:8,station:2,layer:8,slice:4,plane:2,strip:14,x:9,y:9",
+    geo.bitfields["SiTargetHits"],
+    geo.bitfields["SiPadHits"],
+    geo.bitfields["MTCDetHits"],   # MTCSciFi hits (plane=0,1): strip field carries the channel
+    geo.bitfields["MTCDetHits"],   # MTCScint hits (plane=2): x,y carry the cell
 ]
 converter.SourceIDParams = ["SiTargetSourceIDs", "SiPadSourceIDs",
                             "MTCSciFiSourceIDs", "MTCScintSourceIDs"]
@@ -38,9 +42,9 @@ converter.MeasNtupleNames = [
     "MTCSciFiMeas",
 ]
 converter.MeasBitFields = [
-    "system:8,layer:8,slice:4,plane:1,column:2,row:2,strip:14",
-    "system:8,layer:8,slice:4,x:9,y:9",
-    "system:8,station:2,layer:8,slice:4,plane:2,strip:14,x:9,y:9",
+    geo.bitfields["SiTargetHits"],
+    geo.bitfields["SiPadHits"],
+    geo.bitfields["MTCDetHits"],
 ]
 
 ApplicationMgr(
