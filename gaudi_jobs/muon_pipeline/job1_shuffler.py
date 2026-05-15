@@ -15,8 +15,8 @@ shuffler.InputFiles = [
     # "../../output/output_mu-_xyz_1_-42.5_750_dir_0_0_1_E5_100only_mtc_events.edm4hep.root"
     # "../../output/output_mu-_xyz_1.0_-82.5_-1000.0_dir_0_0_1_E5_100_events.edm4hep.root"
     # "../../output/output_mu-_xyz_1.0_-0.0_-1000.0_dir_0_0_1_E5_100_events.edm4hep.root"
-    # "../../output/output_mu-_xyz_1.0_-82.5_750.0_dir_0_0_1_E5_100_events.edm4hep.root" # working scifi hits
-    "../../output/output_mu-_xyz_5.0_-82.5_750.0_dir_0_0_1_E5_100_events.edm4hep.root" # no magfield
+    "../../output/output_mu-_xyz_5.0_-82.5_750.0_dir_0_0_1_E5_100_events.edm4hep.root" # working scifi hits
+    # "../../output/output_mu-_xyz_5.0_-82.5_750.0_dir_0_0_1_E5_100_events.edm4hep.root" # no magfield
 ]
 shuffler.SourceIDs = [
     1,
