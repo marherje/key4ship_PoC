@@ -97,6 +97,9 @@ proto.SeedStripPitch   = geo.sitarget_strip_pitch
 proto.SeedMomentum     = 10.0   # GeV
 proto.MaxChi2PerMeas        = 500.0
 proto.HoughMaxMultiplicity  = 10.0  # safety net after isolation filter
+# CKF MeasurementSelector: per-surface chi2 cut and max measurements
+proto.Chi2CutOff            = 15.0  # local chi2 to accept a measurement
+proto.NumMeasCutOff         = 1     # max measurements per surface
 # Crossing isolation filter for shower rejection
 # Filters crossings (SiTarget) and positions (SiPad) by 2D density
 # within each station/layer. Isolated = few neighbors within IsolationWindow.
