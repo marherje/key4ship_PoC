@@ -5,6 +5,7 @@
 #include "Acts/Geometry/GeometryContext.hpp"
 #include "Acts/Geometry/TrackingGeometry.hpp"
 #include "Acts/MagneticField/MagneticFieldContext.hpp"
+#include "Acts/Geometry/DetectorElementBase.hpp"
 #include "Acts/Surfaces/Surface.hpp"
 #include <map>
 #include <memory>
@@ -41,6 +42,8 @@ private:
   std::shared_ptr<const Acts::TrackingGeometry> m_trackingGeometry;
   std::vector<const Acts::Surface*>             m_allSurfaces;
   Acts::GeometryContext                         m_gctx;
+  // Detector elements must outlive all surfaces (surfaces hold raw pointers back).
+  std::vector<std::shared_ptr<Acts::DetectorElementBase>> m_detectorElements;
 
   // key = (detID, station, layerInDet, plane)
   std::map<std::tuple<int,int,int,int>, const Acts::Surface*> m_surfaceByAddressMap;

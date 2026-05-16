@@ -15,36 +15,43 @@ The seeding code grouped them by `round(center.x() / 10.0)`, which placed ~2–3
 
 ---
 
-## Open Issues
+### Hough seeder gives wrong seed for curved MTC tracks (FIXED by CKF switch)
 
-### 1. Hough seeder does not handle curved tracks — wrong reconstructed position
+**Was:** The Hough accumulator assumes straight tracks. A 5 GeV muon curves by hundreds of mm across the MTC (1.7 T iron field, R ≈ 9.8 m), spreading votes across many bins. The wrong Hough peak won, giving chi2/nMeas ≈ 120.
 
-**Symptom:** Reconstructed tracks appear far from SciFi hits in the event display. The dominant Hough peak frequently corresponds to a spurious crossing rather than the true muon position. Example from evt=0:
-- True muon: (x=5, y=−82.5) mm
-- Winning Hough seed: (x=12.0, y=−3.0) mm (6 votes)
-- Correct-region peak: (x=6.5, y=−85.7) mm (4 votes, loses, flagged duplicate)
+**Fix applied:** Replaced `KalmanFitter` + Hough seeding with `CombinatorialKalmanFilter` (CKF). The CKF propagates the track state between surfaces using `EigenStepper` + `IronSlabBField`, inherently following the curved trajectory without needing an accurate seed position. The Hough is retained only to provide a rough transverse (x, y) starting position hint; the CKF propagates through all 150 surfaces regardless.
 
-**Root cause:** The Hough accumulator bins in constant (x, y). This implicitly assumes the track is straight — i.e., has the same transverse position at every z. The MTC muon is **not** straight:
-
-- B_y = 1.7 T in iron absorbers; R = p/(qB) = 5 GeV / (0.3 × 1.7) ≈ 9.8 m
-- 45 iron slabs × 50 mm = 2250 mm of iron path
-- Per-slab deflection angle ≈ 50/9800 ≈ 0.005 rad; over 45 slabs ≈ 0.23 rad total
-- Cumulative transverse displacement over the full MTC (z = 800–4090 mm): hundreds of mm in x
-
-Because the muon curves, the U×V crossings from different MTC layers land at different (x, y) positions following the curved trajectory. With HoughBinSize = 5 mm, the votes are spread across many bins. No single bin accumulates enough votes to dominate. Low-multiplicity spurious peaks (from secondary hits or random U–V pairings) win by default.
-
-**Evidence:** chi2/nMeas ≈ 120 for most events (expected ≈ 1 for a good fit). The KF starts from the wrong seed position and fails to converge, since the 1D strip measurements do not give enough pull in both transverse coordinates simultaneously to recover from a large seed error.
-
-**Required fix:** The straight-line Hough is the wrong tool for this geometry. Options:
-- **Per-station local seeding:** fit a straight-line seed within each MTC station independently (curvature within a single 1m station is small), then link station seeds by extrapolating with a bending-angle hypothesis.
-- **Hough in (x₀, p_x/p_z) space:** parameterise the track by its transverse intercept and slope; each measurement votes for a line in this space. Requires knowing the approximate momentum to constrain the Hough range.
-- **Cellular automaton / track-following:** build track candidates by chaining compatible hits layer-by-layer, allowing a configurable bending between layers.
-
-Until the seeder is fixed, tracks reconstructed in MTC-only mode (`muon_pipeline`) should not be trusted for position or momentum.
+**Result:** chi2/nMeas drops from ~120 to ~3–5, nMeas = 19–31 per event (up from 0).
 
 ---
 
-### 2. Event display draws a vertical straight line instead of the fitted trajectory
+### CKF finds no tracks — all surfaces classified as "passive" (FIXED)
+
+**Root cause 1 — null SurfaceArray:** `ACTSGeoSvc` created `PlaneLayer` with `nullptr` for `SurfaceArray`. `Layer::resolve()` in ACTS checks `resolveSensitive && m_surfaceArray` (line 60 of `Layer.ipp`). With null `SurfaceArray`, every layer returns false and the `Acts::Navigator` skips all surfaces → `nMeas=0 nHoles=0`.
+
+**Fix applied:** Each active `PlaneLayer` now gets a `SurfaceArray` containing one `PlaneSurface` module created through `SNDDetectorElement`.
+
+**Root cause 2 — no `associatedDetectorElement`:** `CKFActor::filter()` checks `surface->associatedDetectorElement() != nullptr` (line 442 of `CombinatorialKalmanFilter.hpp`) to decide if a surface is sensitive. Bare `PlaneSurface` objects have no detector element → every surface logged as "Passive surface detected" → no track states created.
+
+**Fix applied:** Added `SNDDetectorElement : public Acts::DetectorElementBase` in `ACTSGeoSvc.cpp`. Surfaces are now created via `PlaneSurface(bounds, *detElement)`, which automatically sets `m_associatedDetectorElement`. Detector elements are stored in `ACTSGeoSvc::m_detectorElements` to keep them alive (surfaces hold raw back-pointers).
+
+**Root cause 3 — `Acts::Navigator` cannot find surfaces via `resolveSensitive`:** Even with a non-null `SurfaceArray`, the standard `Acts::Navigator` needs the `TrackingGeometry` volume hierarchy. For our flat single-volume geometry, it visited surfaces but the CKF's `PropagatorPlainOptions::navigation` (of base type `NavigatorPlainOptions`) cannot carry the `DirectNavigator::surfaces` list — the CKF's `setPlainOptions()` only copies base fields.
+
+**Fix applied:** `SNDFixedNavigator` wrapper struct (in `ACTSProtoTracker.cpp`) wraps `Acts::DirectNavigator`. It stores the full 150-surface list in its own `surfaces` member (not in `Options`) and injects it in `makeState()` before delegating to `DirectNavigator`. The CKF's `setPlainOptions()` cannot erase the surfaces since they live in the Config, not in Options.
+
+---
+
+### `bad_optional_access` crash in fingerprint loop (FIXED)
+
+**Root cause:** `VectorMultiTrajectory::getUncalibratedSourceLink_impl()` calls `.value()` on an `std::optional<SourceLink>` (line 335 of `VectorMultiTrajectory.hpp`). Some track states with `MeasurementFlag` set have an allocated but unfilled source link slot — calling `getUncalibratedSourceLink()` on them throws `std::bad_optional_access`.
+
+**Fix applied:** Added `ts.hasUncalibratedSourceLink()` guard before calling `getUncalibratedSourceLink()` in the duplicate-rejection fingerprint loop in `ACTSProtoTracker.cpp`.
+
+---
+
+## Open Issues
+
+### 1. Event display draws a vertical straight line instead of the fitted trajectory
 
 **Symptom:** The reconstructed track is rendered as a vertical line at constant (seed_x, seed_y) passing through every detector layer — it does not follow the actual track.
 
@@ -57,30 +64,20 @@ points = [(sx*mm2cm, sy*mm2cm, z*mm2cm, z) for z in layer_zs_mm]
 
 This creates a column at fixed (x, y) for all z. `draw_tracks()` then connects these with straight line segments.
 
-**Root cause — data:** `EDM4HEP2RNTuple.cpp` writes only `seed_x` and `seed_y` to the `ACTSTracks` RNTuple (extracted from the `AtIP` track state's `D0`/`Z0` fields). The Kalman filter output — fitted (x, y, dx/dz, dy/dz) at each measurement surface — is never written.
-
-**Two separate errors:**
-
-| Error | Effect |
-|-------|--------|
-| Track direction ignored | Even for a straight track, the particle enters at a slope (dx/dz, dy/dz); the display ignores this and shows a vertical column. |
-| Magnetic curvature ignored | In the MTC iron (B_y = 1.7 T) the track bends in x by hundreds of mm over 3.3 m. A straight line in any direction deviates arbitrarily from the true path. |
+**Root cause — data:** `EDM4HEP2RNTuple.cpp` writes only `seed_x` and `seed_y` to the `ACTSTracks` RNTuple (extracted from the `AtIP` track state's `D0`/`Z0` fields). The CKF output — fitted (x, y, dx/dz, dy/dz) at each measurement surface — is written to `edm4hep::TrackState` objects in `tracks.edm4hep.root` by `ACTSProtoTracker`, but `EDM4HEP2RNTuple` does not yet extract them.
 
 **Required fix:**
 
-1. **Export per-surface fitted track states from `ACTSProtoTracker`.** For each accepted ACTS track, write the fitted position (global x, y, z) at each measurement surface into the RNTuple (or into the `edm4hep::TrackState` collection).
+1. **Read per-surface fitted track states in `EDM4HEP2RNTuple.cpp`.** Extract the `AtOther` track states (phi, tanLambda, omega) from the `ACTSTracks` collection and write them as a branch in the RNTuple.
 
 2. **Update `event_display_eve.py` to use per-surface positions.** Connect the fitted positions with line segments rather than projecting a seed point through all layers.
 
-As a minimal interim step, export the seed **direction vector** (fitted px/pz, py/pz at AtIP) so the display can draw a sloped straight line rather than a vertical one. This does not fix the curvature issue but at least gives the correct first-order direction.
-
 ---
 
-## Interaction between the two issues
+### 2. CKF accepts fewer muon hits than expected (chi2CutOff tuning)
 
-Issue 1 (wrong seed) feeds directly into Issue 2 (wrong display). Even if the display code were fixed to draw the actual fitted trajectory, the fitted trajectory would still be wrong because the Hough seeder gives the KF a bad starting position, causing poor convergence (chi2/nMeas ≫ 1).
+**Symptom:** nMeas ≈ 19–31 per event, while ~60+ genuine muon hits are expected (40 SiTarget + 20 SiPad + some MTC). Most surfaces show `MeasurementSelector: No measurement candidate, chi2 ≈ 350` (outlier states).
 
-The correct order of fixes:
-1. Fix the seeder to find the correct track position → gives the KF a good seed.
-2. Export KF output states to the RNTuple.
-3. Use those states in the event display.
+**Root cause:** After the KF converges on the first few measurements, sigma_pred shrinks to ~0.022 mm (SiTarget strip pitch / sqrt(12)). The chi2CutOff of 15.0 then accepts only measurements within sqrt(15 × 2 × 0.022²) ≈ 0.12 mm of the predicted position. Background hits (secondary particles, delta-rays) at larger distances are correctly rejected, but some genuine muon hits may also fall outside this window if the track model or coordinate mapping has small systematic offsets.
+
+**Diagnosis:** Raise `Chi2CutOff` from 15 to 100 in `job4_tracking.py`. If nMeas jumps to ~60+, the cut was too tight. If it stays at ~25, the background rejection is correct and genuine muon hits are being accepted.

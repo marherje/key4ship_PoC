@@ -22,13 +22,17 @@
 
 // ACTS propagator
 #include "Acts/Propagator/EigenStepper.hpp"
-#include "Acts/Propagator/DirectNavigator.hpp"
 #include "Acts/Propagator/Propagator.hpp"
 #include "Acts/Propagator/PropagatorOptions.hpp"
 
-// ACTS track fitting
+// ACTS track fitting + finding
 #include "Acts/TrackFitting/GainMatrixUpdater.hpp"
-#include "Acts/TrackFitting/KalmanFitter.hpp"
+#include "Acts/Propagator/DirectNavigator.hpp"
+#include "Acts/Propagator/Navigator.hpp"
+#include "Acts/TrackFinding/CombinatorialKalmanFilter.hpp"
+#include "Acts/TrackFinding/MeasurementSelector.hpp"
+#include "Acts/TrackFinding/TrackStateCreator.hpp"
+#include "Acts/EventData/Types.hpp"
 
 // ACTS track containers
 #include "Acts/EventData/TrackContainer.hpp"
@@ -56,6 +60,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <map>
 #include <memory>
@@ -103,20 +108,130 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// SNDSourceLinkAccessor
+// Returns the range [begin, end) of SourceLinks associated with a surface.
+// The slinks vector must be sorted by geometryId() before use.
+// ---------------------------------------------------------------------------
+
+struct SNDSourceLinkAccessor {
+  const std::vector<Acts::SourceLink>* slinks = nullptr;
+  std::pair<std::vector<Acts::SourceLink>::const_iterator,
+            std::vector<Acts::SourceLink>::const_iterator>
+  operator()(const Acts::Surface& surface) const {
+    const auto geoId = surface.geometryId();
+    // std::equal_range needs the comparator in both directions, so use
+    // lower_bound + upper_bound with direction-specific lambdas instead.
+    auto lo = std::lower_bound(
+        slinks->begin(), slinks->end(), geoId,
+        [](const Acts::SourceLink& sl, const Acts::GeometryIdentifier& id) {
+          return sl.get<SNDSourceLink>().geometryId() < id;
+        });
+    auto hi = std::upper_bound(
+        lo, slinks->end(), geoId,
+        [](const Acts::GeometryIdentifier& id, const Acts::SourceLink& sl) {
+          return id < sl.get<SNDSourceLink>().geometryId();
+        });
+    return {lo, hi};
+  }
+};
+
+// ---------------------------------------------------------------------------
+// SNDFixedNavigator — wraps DirectNavigator; injects the surface list from
+// Config at makeState() time so the CKF's setPlainOptions() (which only
+// copies NavigatorPlainOptions base fields) cannot accidentally erase it.
+// ---------------------------------------------------------------------------
+
+struct SNDFixedNavigator {
+  // Surface sequence set once at construction; never touched by CKF options.
+  std::vector<const Acts::Surface*> surfaces;
+
+  // Options: minimal wrapper around NavigatorPlainOptions.
+  // The CKF calls setPlainOptions() on this — it only copies base fields,
+  // which is exactly what we want (surfaces stay in Config, not Options).
+  struct Options : public Acts::NavigatorPlainOptions {
+    explicit Options(const Acts::GeometryContext& gctx)
+        : Acts::NavigatorPlainOptions(gctx) {}
+    void setPlainOptions(const Acts::NavigatorPlainOptions& opts) {
+      static_cast<Acts::NavigatorPlainOptions&>(*this) = opts;
+    }
+  };
+
+  using State = Acts::DirectNavigator::State;
+
+  // makeState: inject our surface list before creating the DirectNavigator state.
+  State makeState(const Options& opts) const {
+    // Diagnostic: confirm this navigator is actually being used.
+    static std::atomic<int> s_callCount{0};
+    if (s_callCount.fetch_add(1) < 3) {
+      std::fprintf(stderr,
+          "[SNDFixedNavigator] makeState called: %zu surfaces in Config\n",
+          surfaces.size());
+    }
+    Acts::DirectNavigator::Options dirOpts(opts.geoContext);
+    static_cast<Acts::NavigatorPlainOptions&>(dirOpts) =
+        static_cast<const Acts::NavigatorPlainOptions&>(opts);
+    dirOpts.surfaces = surfaces;
+    Acts::DirectNavigator inner;
+    return inner.makeState(dirOpts);
+  }
+
+  // Delegate all navigator interface methods to DirectNavigator.
+  Acts::Result<void> initialize(State& state, const Acts::Vector3& pos,
+                                const Acts::Vector3& dir,
+                                Acts::Direction propDir) const {
+    Acts::DirectNavigator inner;
+    return inner.initialize(state, pos, dir, propDir);
+  }
+  Acts::NavigationTarget nextTarget(State& state, const Acts::Vector3& pos,
+                                    const Acts::Vector3& dir) const {
+    Acts::DirectNavigator inner;
+    return inner.nextTarget(state, pos, dir);
+  }
+  bool checkTargetValid(const State& state, const Acts::Vector3& pos,
+                        const Acts::Vector3& dir) const {
+    Acts::DirectNavigator inner;
+    return inner.checkTargetValid(state, pos, dir);
+  }
+  void handleSurfaceReached(State& state, const Acts::Vector3& pos,
+                            const Acts::Vector3& dir,
+                            const Acts::Surface& sf) const {
+    Acts::DirectNavigator inner;
+    inner.handleSurfaceReached(state, pos, dir, sf);
+  }
+  const Acts::Surface* currentSurface(const State& s) const {
+    return s.currentSurface;
+  }
+  const Acts::TrackingVolume* currentVolume(const State&) const {
+    return nullptr;
+  }
+  const Acts::IVolumeMaterial* currentVolumeMaterial(const State&) const {
+    return nullptr;
+  }
+  const Acts::Surface* startSurface(const State& s) const {
+    return s.options.startSurface;
+  }
+  const Acts::Surface* targetSurface(const State& s) const {
+    return s.options.targetSurface;
+  }
+  bool endOfWorldReached(State&) const { return false; }
+  bool navigationBreak(const State& s) const { return s.navigationBreak; }
+};
+
+// ---------------------------------------------------------------------------
 // Type aliases
 // ---------------------------------------------------------------------------
 
-using SNDStepper         = Acts::EigenStepper<>;
-using SNDDirectNavigator = Acts::DirectNavigator;
-using SNDPropagator      = Acts::Propagator<SNDStepper, SNDDirectNavigator>;
+using SNDStepper       = Acts::EigenStepper<>;
+using SNDCKFNavigator  = SNDFixedNavigator;
+using SNDCKFPropagator = Acts::Propagator<SNDStepper, SNDCKFNavigator>;
 
 using SNDTrackContainer = Acts::TrackContainer<
     Acts::VectorTrackContainer,
     Acts::VectorMultiTrajectory,
     std::shared_ptr>;
 
-using SNDKalmanFitter = Acts::KalmanFitter<SNDPropagator,
-                                           Acts::VectorMultiTrajectory>;
+using SNDCKF = Acts::CombinatorialKalmanFilter<SNDCKFPropagator,
+                                               SNDTrackContainer>;
 
 // ---------------------------------------------------------------------------
 // IronSlabBField — By inside registered slabs, zero everywhere else.
@@ -258,6 +373,16 @@ private:
     this, "MaxChi2PerMeas", 500.0,
     "Maximum chi2/nMeas threshold for track acceptance. "
     "Tracks above this threshold are rejected as false seeds."};
+
+  Gaudi::Property<double> m_chi2CutOff{
+      this, "Chi2CutOff", 15.0,
+      "chi2 cut for MeasurementSelector: maximum local chi2 to accept a "
+      "measurement on a surface during CKF track finding."};
+
+  Gaudi::Property<int> m_numMeasCutOff{
+      this, "NumMeasCutOff", 1,
+      "Maximum number of measurements accepted per surface by "
+      "MeasurementSelector during CKF track finding."};
 
   // Track/shower classification: maximum crossing multiplicity per station.
   // For each Hough peak, multiplicity = nCompatCrossings / nCompatStations.
@@ -935,14 +1060,6 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
                         m_bFieldZ.value() * Acts::UnitConstants::T));
     }
 
-    // ---- SurfaceAccessor: maps SourceLink → Surface -------------------------
-    struct SNDSurfaceAccessor {
-      const std::vector<SNDMeasurement>* meas = nullptr;
-      const Acts::Surface* operator()(const Acts::SourceLink& sl) const {
-        return (*meas)[sl.get<SNDSourceLink>().index].surface;
-      }
-    };
-
     // ---- Calibrator ---------------------------------------------------------
     struct SNDCalibrator {
       const std::vector<SNDMeasurement>* meas = nullptr;
@@ -993,21 +1110,80 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
       }
     };
 
-    using KFExtensions = Acts::KalmanFitterExtensions<Acts::VectorMultiTrajectory>;
-    Acts::GainMatrixUpdater gainMatrixUpdater;
-    SNDSurfaceAccessor surfaceAccessor;
-    surfaceAccessor.meas = &measurements;
     SNDCalibrator calibrator;
     calibrator.meas = &measurements;
 
-    KFExtensions extensions;
-    extensions.updater
+    // ---- Build sorted SourceLink list (CKF accessor needs sorted-by-geoId) --
+    // One SourceLink per measurement; includes ALL measurements (not pre-filtered
+    // per seed — the CKF's MeasurementSelector handles per-surface selection).
+    std::vector<Acts::SourceLink> sortedSLinks;
+    sortedSLinks.reserve(measurements.size());
+    for (std::size_t i = 0; i < measurements.size(); ++i) {
+      SNDSourceLink ssl;
+      ssl.index = i;
+      ssl.setGeometryId(measurements[i].surface->geometryId());
+      sortedSLinks.push_back(Acts::SourceLink(ssl));
+    }
+    std::sort(sortedSLinks.begin(), sortedSLinks.end(),
+              [](const Acts::SourceLink& a, const Acts::SourceLink& b) {
+                return a.get<SNDSourceLink>().geometryId() <
+                       b.get<SNDSourceLink>().geometryId();
+              });
+
+    // ---- CKF infrastructure (built once per event, reused across seeds) -----
+    Acts::GainMatrixUpdater gainMatrixUpdater;
+    SNDSourceLinkAccessor slAccessor;
+    slAccessor.slinks = &sortedSLinks;
+
+    Acts::MeasurementSelectorCuts measCuts;
+    measCuts.chi2CutOff            = {m_chi2CutOff.value()};
+    measCuts.numMeasurementsCutOff = {static_cast<std::size_t>(m_numMeasCutOff.value())};
+    Acts::MeasurementSelector measSelector(measCuts);
+
+    using SLinkIter = std::vector<Acts::SourceLink>::const_iterator;
+    Acts::TrackStateCreator<SLinkIter, SNDTrackContainer> tsc;
+    tsc.sourceLinkAccessor
+        .connect<&SNDSourceLinkAccessor::operator()>(&slAccessor);
+    tsc.calibrator
+        .template connect<&SNDCalibrator::operator()>(&calibrator);
+    tsc.measurementSelector
+        .connect<&Acts::MeasurementSelector::select<Acts::VectorMultiTrajectory>>(
+            &measSelector);
+
+    Acts::CombinatorialKalmanFilterExtensions<SNDTrackContainer> ckfExtensions;
+    ckfExtensions.updater
         .connect<&Acts::GainMatrixUpdater::operator()<Acts::VectorMultiTrajectory>>(
             &gainMatrixUpdater);
-    extensions.calibrator
-        .template connect<&SNDCalibrator::operator()>(&calibrator);
-    extensions.surfaceAccessor
-        .template connect<&SNDSurfaceAccessor::operator()>(&surfaceAccessor);
+    ckfExtensions.createTrackStates
+        .connect<&Acts::TrackStateCreator<SLinkIter, SNDTrackContainer>::createTrackStates>(
+            &tsc);
+
+    // SNDFixedNavigator: surfaces injected from allSurfaces at makeState()
+    // time. The CKF's setPlainOptions() only copies NavigatorPlainOptions base
+    // fields and cannot erase the surface list stored in the Config.
+    SNDFixedNavigator ckfNavigator;
+    ckfNavigator.surfaces.assign(allSurfaces.begin(), allSurfaces.end());
+
+    if (evtNum < 1) {
+      debug() << "[ACTSProtoTracker] DIAG: ckfNavigator has "
+              << ckfNavigator.surfaces.size() << " surfaces" << endmsg;
+      if (!ckfNavigator.surfaces.empty()) {
+        debug() << "[ACTSProtoTracker] DIAG: first surf geoId="
+                << ckfNavigator.surfaces.front()->geometryId() << endmsg;
+        debug() << "[ACTSProtoTracker] DIAG: last surf geoId="
+                << ckfNavigator.surfaces.back()->geometryId() << endmsg;
+      }
+    }
+
+    SNDStepper       ckfStepper(bField);
+    SNDCKFPropagator ckfPropagator(std::move(ckfStepper), std::move(ckfNavigator));
+    SNDCKF ckf(std::move(ckfPropagator),
+               Acts::getDefaultLogger("CKF", Acts::Logging::WARNING));
+
+    // Track container accumulates tracks from all seeds this event.
+    auto trackBackend = std::make_shared<Acts::VectorTrackContainer>();
+    auto trajBackend  = std::make_shared<Acts::VectorMultiTrajectory>();
+    SNDTrackContainer ckfTracks(trackBackend, trajBackend);
 
     // Shared seed covariance (loose — same for all seeds)
     Acts::BoundSquareMatrix seedCov = Acts::BoundSquareMatrix::Zero();
@@ -1089,12 +1265,6 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
     // =========================================================================
     for (std::size_t iSeed = 0; iSeed < nSeeds; ++iSeed) {
 
-      // ---- Build fresh propagator for this seed ----------------------------
-      // (propagator is moved into KalmanFitter, so rebuild each iteration)
-      SNDStepper        stepper_i(bField);
-      SNDDirectNavigator navigator_i;
-      SNDPropagator propagator_i(std::move(stepper_i),
-                                  std::move(navigator_i));
 
       // ---- Seed position (DD4hep → ACTS coordinate swap) -------------------
       // DD4hep convention: x=transverse X, y=transverse Y, z=beam.
@@ -1132,75 +1302,8 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
       if (seedDir.norm() < 1e-6) seedDir = Acts::Vector3(1.0, 0.001, 0.001);
       seedDir = seedDir.normalized();
 
-      // ---- Seed-dependent hit selection ------------------------------------
-      // Select the best hit per surface relative to THIS seed's transverse
-      // position (dd_x, dd_y in DD4hep convention).
-      // For 1D measurements: minimize |localCoord - seed_ref|
-      //   plane=0 (StripX): seed_ref = dd_x
-      //   plane=1 (StripY): seed_ref = dd_y
-      // For 2D measurements (SiPad): minimize 2D distance to (dd_x, dd_y)
-      const double seed_ref_x = dd_x;  // transverse X reference [mm]
-      const double seed_ref_y = dd_y;  // transverse Y reference [mm]
-
-      std::unordered_map<Acts::GeometryIdentifier, std::size_t> bestHitPerSurface;
-      for (std::size_t i = 0; i < measurements.size(); ++i) {
-        const auto& m   = measurements[i];
-        auto        gid = m.surface->geometryId();
-
-        double dist = 0.0;
-        if (m.detectorID == 2) {
-          dist = std::abs(m.localCoord - seed_ref_x);
-        } else if (m.is2D) {
-          double dx = m.localCoord  - seed_ref_x;
-          double dy = m.localCoord2 - seed_ref_y;
-          dist = std::sqrt(dx * dx + dy * dy);
-        } else {
-          if (m.plane == 0)
-            dist = std::abs(m.localCoord - seed_ref_x);
-          else
-            dist = std::abs(m.localCoord - seed_ref_y);
-        }
-
-        auto it = bestHitPerSurface.find(gid);
-        if (it == bestHitPerSurface.end()) {
-          bestHitPerSurface[gid] = i;
-        } else {
-          const auto& mExist = measurements[it->second];
-          double existDist = 0.0;
-          if (mExist.detectorID == 2) {
-            existDist = std::abs(mExist.localCoord - seed_ref_x);
-          } else if (mExist.is2D) {
-            double dx = mExist.localCoord  - seed_ref_x;
-            double dy = mExist.localCoord2 - seed_ref_y;
-            existDist = std::sqrt(dx * dx + dy * dy);
-          } else {
-            if (mExist.plane == 0)
-              existDist = std::abs(mExist.localCoord - seed_ref_x);
-            else
-              existDist = std::abs(mExist.localCoord - seed_ref_y);
-          }
-          if (dist < existDist) it->second = i;
-        }
-      }
-
-      // Build source link list for this seed (one per surface, sorted by X)
-      std::vector<Acts::SourceLink> allSourceLinks;
-      allSourceLinks.reserve(bestHitPerSurface.size());
-      for (const auto& [gid, idx] : bestHitPerSurface) {
-        SNDSourceLink ssl;
-        ssl.index = idx;
-        ssl.setGeometryId(gid);
-        allSourceLinks.emplace_back(ssl);
-      }
-      std::sort(allSourceLinks.begin(), allSourceLinks.end(),
-                [&](const Acts::SourceLink& a, const Acts::SourceLink& b) {
-                  const auto& ma = measurements[a.get<SNDSourceLink>().index];
-                  const auto& mb = measurements[b.get<SNDSourceLink>().index];
-                  return ma.surface->center(gctx).x() <
-                         mb.surface->center(gctx).x();
-                });
-
       // ---- Create seed parameters -------------------------------------------
+      // Hit selection is delegated to the CKF's MeasurementSelector (chi2 cut).
       auto seedParamsResult = Acts::BoundTrackParameters::create(
           gctx, sfSeed->getSharedPtr(), seedPos4, seedDir, seedQoverP,
           seedCov, Acts::ParticleHypothesis::muon());
@@ -1214,66 +1317,82 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
       }
       const auto& seedParams = *seedParamsResult;
 
-      // ---- KF options -------------------------------------------------------
+      // ---- CKF options ------------------------------------------------------
       Acts::PropagatorPlainOptions pOptions(gctx, m_mctx);
       pOptions.direction = Acts::Direction::Forward();
       pOptions.stepping.maxStepSize = 10.0;
       pOptions.maxSteps = 10000;
 
-      Acts::KalmanFitterOptions<Acts::VectorMultiTrajectory> kfOptions(
+      Acts::CombinatorialKalmanFilterOptions<SNDTrackContainer> ckfOptions(
           gctx, m_mctx, std::cref(m_cctx),
-          extensions,
+          ckfExtensions,
           pOptions,
-          nullptr,
-          false,
-          false);
+          /*multipleScattering=*/false,
+          /*energyLoss=*/false);
 
-      // ---- Run KF -----------------------------------------------------------
-      auto trackBackend = std::make_shared<Acts::VectorTrackContainer>();
-      auto trajBackend  = std::make_shared<Acts::VectorMultiTrajectory>();
-      SNDTrackContainer kfTracks(trackBackend, trajBackend);
+      // ---- Seed surface diagnostic ------------------------------------------
+      if (evtNum < 1 && iSeed == 0) {
+        const Acts::Surface* sf = &seedParams.referenceSurface();
+        debug() << "[ACTSProtoTracker] DIAG evt=0 seed=0: seedSurf geoId="
+                << sf->geometryId()
+                << " center=" << sf->center(gctx).transpose() << endmsg;
+        // allSurfaces is the same list injected into the navigator
+        bool found = std::any_of(
+            allSurfaces.begin(), allSurfaces.end(),
+            [sf](const Acts::Surface* s){ return s == sf; });
+        debug() << "[ACTSProtoTracker] DIAG: seedSurf in allSurfaces=" << found
+                << " allSurfaces.size()=" << allSurfaces.size() << endmsg;
+      }
 
-      SNDKalmanFitter kf(std::move(propagator_i),
-                         Acts::getDefaultLogger("KF", Acts::Logging::WARNING));
+      // ---- Run CKF ----------------------------------------------------------
+      auto ckfResult = ckf.findTracks(seedParams, ckfOptions, ckfTracks);
 
-      // Always use the full surface sequence.
-      // The KF will mark surfaces before the first hit as holes — this is fine.
-      auto kfResult = kf.fit(
-          allSourceLinks.begin(), allSourceLinks.end(),
-          seedParams,
-          kfOptions,
-          allSurfaces,        // full surface sequence, always from first surface
-          kfTracks);
-
-      if (!kfResult.ok()) {
+      if (!ckfResult.ok()) {
         warning() << "[ACTSProtoTracker] evt=" << evtNum
                   << " seed=" << iSeed
-                  << " KF failed: " << kfResult.error() << endmsg;
+                  << " CKF failed: " << ckfResult.error() << endmsg;
         continue;
       }
 
-      const auto& kfTrack = *kfResult;
-      const std::size_t nMeas = kfTrack.nMeasurements();
+      const auto& ckfTrackVec = *ckfResult;
 
-      debug() << "[ACTSProtoTracker] evt=" << evtNum
-              << " seed=" << iSeed
-              << " KF nMeas=" << nMeas
-              << " nHoles=" << kfTrack.nHoles()
-              << " chi2=" << kfTrack.chi2() << endmsg;
+      if (evtNum < 1) {
+        debug() << "[ACTSProtoTracker] DIAG evt=" << evtNum
+                << " seed=" << iSeed
+                << " ckfTrackVec.size()=" << ckfTrackVec.size() << endmsg;
+      }
 
-      // ---- Write output if track is good ------------------------------------
-      if (nMeas >= 3) {
-        // ---- Duplicate rejection -------------------------------------------
-        // Build fingerprint: set of measurement (hit) indices used by this fit.
-        // Two tracks are duplicates if they share too many of the same hits,
-        // not just the same surfaces (which would always be 100% overlap since
-        // both seeds visit all surfaces).
-        std::set<std::size_t> fingerprint;
-        for (const auto& [gid, idx] : bestHitPerSurface) {
-          fingerprint.insert(idx);
+      // ---- Process CKF results: select first acceptable track per seed ------
+      for (const auto& ckfTrack : ckfTrackVec) {
+        const std::size_t nMeas = ckfTrack.nMeasurements();
+
+        debug() << "[ACTSProtoTracker] evt=" << evtNum
+                << " seed=" << iSeed
+                << " CKF nMeas=" << nMeas
+                << " nHoles=" << ckfTrack.nHoles()
+                << " chi2=" << ckfTrack.chi2() << endmsg;
+
+        if (nMeas < 3) continue;
+
+        const double chi2PerMeas = ckfTrack.chi2() / std::max(1.0, (double)nMeas);
+        if (chi2PerMeas > m_maxChi2PerMeas.value()) {
+          debug() << "[ACTSProtoTracker] evt=" << evtNum
+                  << " seed=" << iSeed
+                  << " rejected: chi2/nMeas=" << chi2PerMeas << endmsg;
+          continue;
         }
 
-        // Check overlap with already accepted tracks.
+        // ---- Duplicate rejection ------------------------------------------
+        // Build fingerprint from measurement track states (source link indices).
+        std::set<std::size_t> fingerprint;
+        for (const auto& ts : ckfTrack.trackStatesReversed()) {
+          if (ts.typeFlags().test(Acts::TrackStateFlag::MeasurementFlag) &&
+              ts.hasUncalibratedSourceLink()) {
+            fingerprint.insert(
+                ts.getUncalibratedSourceLink().template get<SNDSourceLink>().index);
+          }
+        }
+
         bool isDuplicate = false;
         for (const auto& accepted : acceptedFingerprints) {
           std::size_t nShared = 0;
@@ -1283,7 +1402,6 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
           const double smaller = static_cast<double>(
               std::min(fingerprint.size(), accepted.size()));
           const double overlapFraction = (smaller > 0) ? nShared / smaller : 0.0;
-
           if (overlapFraction > kDuplicateOverlapFraction) {
             isDuplicate = true;
             debug() << "[ACTSProtoTracker] evt=" << evtNum
@@ -1293,30 +1411,17 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
             break;
           }
         }
+        if (isDuplicate) continue;
 
-        if (isDuplicate) continue;  // skip to next seed
-
-        const double chi2PerMeas = kfTrack.chi2() / std::max(1.0, (double)nMeas);
-        if (chi2PerMeas > m_maxChi2PerMeas.value()) {
-          debug() << "[ACTSProtoTracker] evt=" << evtNum
-          << " seed=" << iSeed
-          << " rejected: chi2/nMeas=" << chi2PerMeas << endmsg;
-          continue;
-        }
-
-        // Accept this track
         acceptedFingerprints.push_back(fingerprint);
 
         // ---- Write output --------------------------------------------------
         auto track = output->create();
         track.setType(1);
-        track.setChi2(static_cast<float>(kfTrack.chi2()));
-        track.setNdf(static_cast<int>(kfTrack.nDoF()));
+        track.setChi2(static_cast<float>(ckfTrack.chi2()));
+        track.setNdf(static_cast<int>(ckfTrack.nDoF()));
 
         // Store seed transverse position as the first TrackState (location=AtIP).
-        // D0 = seed transverse X [mm] (DD4hep convention)
-        // Z0 = seed transverse Y [mm] (DD4hep convention)
-        // This allows the event display to reconstruct per-track hit assignment.
         {
           edm4hep::TrackState seedState{};
           seedState.location = edm4hep::TrackState::AtIP;
@@ -1325,9 +1430,10 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
           track.addToTrackStates(seedState);
         }
 
+        // Write per-surface filtered states for event display / analysis.
         try {
-          auto tipIdx = kfTrack.tipIndex();
-          auto& mutableTraj = kfTracks.trackStateContainer();
+          auto tipIdx = ckfTrack.tipIndex();
+          auto& mutableTraj = ckfTracks.trackStateContainer();
           while (true) {
             auto ts = mutableTraj.getTrackState(tipIdx);
             if (ts.hasCalibrated()) {
@@ -1363,14 +1469,14 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
                     << " trackStates iteration failed: " << e.what() << endmsg;
         }
         ++nTracks;
-
+        break;  // take first acceptable track per seed
       }
 
     }  // end loop over seeds
 
     info() << "[ACTSProtoTracker] evt=" << evtNum
            << " measurements=" << measurements.size()
-           << " KF tracks=" << nTracks << endmsg;
+           << " CKF tracks=" << nTracks << endmsg;
 
     return StatusCode::SUCCESS;
   } catch (const std::exception& e) {

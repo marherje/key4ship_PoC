@@ -15,6 +15,8 @@
 #include "Acts/Geometry/TrackingVolumeArrayCreator.hpp"
 #include "Acts/Geometry/CuboidVolumeBounds.hpp"
 #include "Acts/Surfaces/RectangleBounds.hpp"
+#include "Acts/Surfaces/PlaneSurface.hpp"
+#include "Acts/Surfaces/PlanarBounds.hpp"
 #include "Acts/Surfaces/Surface.hpp"
 #include "Acts/Surfaces/SurfaceArray.hpp"
 #include "Acts/Utilities/AxisDefinitions.hpp"
@@ -24,6 +26,35 @@
 #include <cmath>
 #include <functional>
 #include <string>
+
+// ---------------------------------------------------------------------------
+// SNDDetectorElement
+// A minimal DetectorElementBase so the CKF actor classifies each plane as
+// sensitive (CKF checks associatedDetectorElement() != nullptr at line 442
+// of CombinatorialKalmanFilter.hpp; without this, every surface is "passive").
+// ---------------------------------------------------------------------------
+
+class SNDDetectorElement : public Acts::DetectorElementBase {
+public:
+  SNDDetectorElement(std::shared_ptr<const Acts::PlanarBounds> bounds,
+                     Acts::Transform3 transform, double thickness)
+      : m_transform(std::move(transform)), m_thickness(thickness) {
+    // PlaneSurface(bounds, detElement) sets m_associatedDetectorElement = this
+    m_surface = Acts::Surface::makeShared<Acts::PlaneSurface>(bounds, *this);
+  }
+
+  const Acts::Transform3& transform(const Acts::GeometryContext&) const override {
+    return m_transform;
+  }
+  const Acts::Surface& surface() const override { return *m_surface; }
+  Acts::Surface&       surface() override       { return *m_surface; }
+  double thickness() const override { return m_thickness; }
+
+private:
+  Acts::Transform3 m_transform;
+  double m_thickness;
+  std::shared_ptr<Acts::PlaneSurface> m_surface;
+};
 
 // ---------------------------------------------------------------------------
 // Constructor
@@ -213,8 +244,10 @@ StatusCode ACTSGeoSvc::initialize() {
   // =========================================================================
 
   // ---- Step 2: Create one PlaneLayer per surface --------------------------
-  // Pass nullptr for surfaceArray: the PlaneLayer IS the sensitive surface.
-  // The Navigator will resolve it directly via the layer surface representation.
+  // Each active layer gets a PlaneSurface module + SurfaceArray so the ACTS
+  // Navigator can find it via resolveSensitive=true. Without a non-null
+  // SurfaceArray, Layer::resolve() always returns false and the CKF visits
+  // zero surfaces.
   std::vector<Acts::LayerPtr> allLayers;
   allLayers.reserve(allPlanes.size());
 
@@ -249,10 +282,19 @@ StatusCode ACTSGeoSvc::initialize() {
 
     const double layerThickness = 2.0 * pi.thickness + 0.01;
 
+    // Detector element: sets associatedDetectorElement() on the surface so the
+    // CKF actor treats it as sensitive (not passive). Must outlive the surface.
+    auto detElem = std::make_shared<SNDDetectorElement>(
+        bounds, transform, pi.thickness);
+    m_detectorElements.push_back(detElem);
+
+    auto surfaceArray = std::make_unique<Acts::SurfaceArray>(
+        detElem->surface().getSharedPtr());
+
     auto layer = Acts::PlaneLayer::create(
         transform,
         bounds,
-        std::unique_ptr<Acts::SurfaceArray>{},
+        std::move(surfaceArray),
         layerThickness,
         nullptr,
         Acts::active);
@@ -350,14 +392,23 @@ StatusCode ACTSGeoSvc::initialize() {
          << endmsg;
 
   // Collect sensitive surfaces from confined layers.
-  // With nullptr SurfaceArray, the layer's surfaceRepresentation() IS
-  // the sensitive surface that the Navigator will visit.
+  // We use the module surfaces stored in each layer's SurfaceArray — these
+  // are the same surfaces the Navigator visits via resolveSensitive=true.
+  // Using surfaceRepresentation() instead would give the wrong geometry IDs
+  // (the layer envelope, not the sensitive module surface).
   const Acts::TrackingVolume* world =
       m_trackingGeometry->highestTrackingVolume();
   if (world && world->confinedLayers()) {
     for (const auto& layer : world->confinedLayers()->arrayObjects()) {
       if (layer && layer->layerType() == Acts::active) {
-        m_allSurfaces.push_back(&layer->surfaceRepresentation());
+        const Acts::SurfaceArray* sa = layer->surfaceArray();
+        if (sa) {
+          for (const Acts::Surface* sf : sa->surfaces()) {
+            if (sf) m_allSurfaces.push_back(sf);
+          }
+        } else {
+          m_allSurfaces.push_back(&layer->surfaceRepresentation());
+        }
       }
     }
   }
