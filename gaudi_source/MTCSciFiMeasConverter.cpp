@@ -73,7 +73,7 @@ private:
 
   Gaudi::Property<double> m_stereoAngleDeg{
       this, "StereoAngleDeg", 5.0,
-      "Fiber stereo angle magnitude [degrees] (unused in conversion, stored for reference)"};
+      "Fiber stereo angle magnitude [degrees] — used to compute eBoundLoc0 = cos(α)·x_stereo"};
 
   // ---- DataHandles ----
   mutable std::unique_ptr<
@@ -151,8 +151,11 @@ StatusCode MTCSciFiMeasConverter::execute(const EventContext&) const {
       return StatusCode::SUCCESS;
     }
 
-    const double pitch    = m_stripPitch.value();      // mm
-    const double variance = (pitch * pitch) / 12.0;   // mm^2
+    const double pitch     = m_stripPitch.value();     // mm
+    const double alpha_rad = m_stereoAngleDeg.value() * M_PI / 180.0;
+    const double cos_a     = std::cos(alpha_rad);
+    // eBoundLoc0 = cos(α)·x_stereo; propagate the scale factor into the variance.
+    const double variance  = cos_a * cos_a * (pitch * pitch) / 12.0;  // mm²
 
     std::size_t nConverted = 0;
     std::size_t nSkipped   = 0;
@@ -172,11 +175,10 @@ StatusCode MTCSciFiMeasConverter::execute(const EventContext&) const {
         continue;
       }
 
-      // Decode position from hit.
-      // position.x from SND_SciFiAction is in mm (TGeo cm * 10 applied at source).
-      // position.y is the truth energy-weighted step-Y for SciFiDigitizer only.
       const auto& pos = hit.getPosition();
-      const double localCoord = pos.x;  // mm
+      // pos.x = x_stereo [mm]: CartesianStripXStereo strip centre (×10 by SND_SciFiAction).
+      // eBoundLoc0 = cos(α)·x_stereo (surface rotation R_X(±α)·R_Y(π/2) in ACTSGeoSvc).
+      const double localCoord = cos_a * pos.x;
 
       // Find matching ACTS surface via detector address lookup.
       const Acts::Surface* surf = m_geoSvc->surfaceByAddress(2, station, layer, plane);
@@ -195,11 +197,8 @@ StatusCode MTCSciFiMeasConverter::execute(const EventContext&) const {
       if (hit.contributions_size() > 0)
         hitTime = static_cast<float>(hit.getContributions(0).getTime());
 
-      // 1D covariance: only the xx element (eBoundLoc0) carries the strip
-      // precision.  The surface is pre-rotated for stereo in ACTSGeoSvc, so
-      // eBoundLoc0 on this surface corresponds to strip_centre_at_y0.
       edm4hep::CovMatrix3f cov{};
-      cov[0] = static_cast<float>(variance);  // xx = σ²_strip
+      cov[0] = static_cast<float>(variance);  // xx = σ²(eBoundLoc0) = cos²α·pitch²/12
 
       auto mhit = output->create();
       mhit.setCellID(cid);

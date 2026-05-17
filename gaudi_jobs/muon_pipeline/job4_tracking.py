@@ -94,7 +94,7 @@ proto.HoughHalfSize    = 200.0  # mm
 proto.HoughMinVotes    = 3      # crossings: each station contributes 1 crossing
 proto.SeedCompatRadius = 8.0    # mm — radius for centroid refinement
 proto.SeedStripPitch   = geo.sitarget_strip_pitch
-proto.SeedMomentum     = 10.0   # GeV
+proto.SeedMomentum     = 5.0   # GeV
 proto.MaxChi2PerMeas        = 500.0
 proto.HoughMaxMultiplicity  = 10.0  # safety net after isolation filter
 # CKF MeasurementSelector: per-surface chi2 cut and max measurements
