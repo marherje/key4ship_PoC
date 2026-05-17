@@ -7,9 +7,9 @@
   <layer repeat="MTC_NLayers">
     <slice material="Iron"         thickness="MTC_FeThickness"        sensitive="false" vis="TungstenVis"/>
     <slice material="Iron"         thickness="MTC_InnerIronThickness"  sensitive="false" vis="TungstenVis"/>
-    <slice material="Silicon"      thickness="MTC_SciFiThickness"      sensitive="true"  plane="0" vis="SiVis"/>
+    <slice material="Scintillator"      thickness="MTC_SciFiThickness"      sensitive="true"  plane="0" vis="SiVis"/>
     <slice material="Air"          thickness="MTC_XY_plane_gap"        sensitive="false" vis="AirVis"/>
-    <slice material="Silicon"      thickness="MTC_SciFiThickness"      sensitive="true"  plane="1" vis="SiVis"/>
+    <slice material="Scintillator"      thickness="MTC_SciFiThickness"      sensitive="true"  plane="1" vis="SiVis"/>
     <slice material="Iron"         thickness="MTC_InnerIronThickness"  sensitive="false" vis="TungstenVis"/>
     <slice material="Scintillator" thickness="MTC_ScintThickness"      sensitive="true"  plane="2" vis="SiVis"/>
   </layer>
