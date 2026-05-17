@@ -49,28 +49,23 @@ The seeding code grouped them by `round(center.x() / 10.0)`, which placed ~2–3
 
 ---
 
-## Open Issues
+## Fixed (continued)
 
-### 1. Event display draws a vertical straight line instead of the fitted trajectory
+### Event display draws a vertical straight line instead of the fitted trajectory (FIXED)
 
-**Symptom:** The reconstructed track is rendered as a vertical line at constant (seed_x, seed_y) passing through every detector layer — it does not follow the actual track.
+**Was:** `read_track_points()` built display points as `(seed_x, seed_y, z)` for all layer z values — a vertical line. `EDM4HEP2RNTuple` wrote only the `AtIP` seed state.
 
-**Root cause — code:** In `event_display/event_display_eve.py`, `read_track_points()` builds the display points as:
+**Fix applied:**
 
-```python
-sx, sy = seed['seed_x'], seed['seed_y']
-points = [(sx*mm2cm, sy*mm2cm, z*mm2cm, z) for z in layer_zs_mm]
-```
+1. **`ACTSProtoTracker.cpp`** — Each `AtOther` TrackState now has `referencePoint` filled:
+   - `.x = smoothed[eBoundLoc0]` (DD4hep transverse X in mm)
+   - `.y = smoothed[eBoundLoc1]` (DD4hep transverse Y in mm)
+   - `.z = surface.center(gctx).x()` (beam Z in mm)
+   Falls back to filtered parameters if no smoothed state.
 
-This creates a column at fixed (x, y) for all z. `draw_tracks()` then connects these with straight line segments.
+2. **`EDM4HEP2RNTuple.cpp`** — Added `ACTSTrackStates` RNTuple (one row per surface per track): `window_id, track_id, state_idx, x, y, z` (all in mm, upstream→downstream order).
 
-**Root cause — data:** `EDM4HEP2RNTuple.cpp` writes only `seed_x` and `seed_y` to the `ACTSTracks` RNTuple (extracted from the `AtIP` track state's `D0`/`Z0` fields). The CKF output — fitted (x, y, dx/dz, dy/dz) at each measurement surface — is written to `edm4hep::TrackState` objects in `tracks.edm4hep.root` by `ACTSProtoTracker`, but `EDM4HEP2RNTuple` does not yet extract them.
-
-**Required fix:**
-
-1. **Read per-surface fitted track states in `EDM4HEP2RNTuple.cpp`.** Extract the `AtOther` track states (phi, tanLambda, omega) from the `ACTSTracks` collection and write them as a branch in the RNTuple.
-
-2. **Update `event_display_eve.py` to use per-surface positions.** Connect the fitted positions with line segments rather than projecting a seed point through all layers.
+3. **`event_display_eve.py`** — `read_track_points()` now calls `read_track_states()` to read `ACTSTrackStates` and connects the actual fitted positions. Falls back to seed projection only if no states are found (e.g. old files).
 
 ---
 
@@ -81,3 +76,159 @@ This creates a column at fixed (x, y) for all z. `draw_tracks()` then connects t
 **Root cause:** After the KF converges on the first few measurements, sigma_pred shrinks to ~0.022 mm (SiTarget strip pitch / sqrt(12)). The chi2CutOff of 15.0 then accepts only measurements within sqrt(15 × 2 × 0.022²) ≈ 0.12 mm of the predicted position. Background hits (secondary particles, delta-rays) at larger distances are correctly rejected, but some genuine muon hits may also fall outside this window if the track model or coordinate mapping has small systematic offsets.
 
 **Diagnosis:** Raise `Chi2CutOff` from 15 to 100 in `job4_tracking.py`. If nMeas jumps to ~60+, the cut was too tight. If it stays at ~25, the background rejection is correct and genuine muon hits are being accepted.
+
+---
+
+### MTC SciFi measurement value: cos(α) scale and stereo encoding (FIXED)
+
+The ACTS surface for each MTC SciFi plane has rotation `R_X(±α)·R_Y(π/2)` (`ACTSGeoSvc.cpp`), making:
+
+```
+eBoundLoc0_U = cos(α)·dd_x − sin(α)·dd_y   (plane 0)
+eBoundLoc0_V = cos(α)·dd_x + sin(α)·dd_y   (plane 1)
+```
+
+The 1D strip read-out from `CartesianStripXStereo` gives `x_stereo = dd_x ∓ dd_y·tan(α)`, which equals `eBoundLoc0 / cos(α)`. The stereo contribution (`±sin(α)·dd_y`) is already encoded in `x_stereo`; no separate recovery of `dd_y` is needed. The original issue (plain `CartesianStripX` stored only `dd_x`, missing the stereo term entirely) was resolved when the segmentation was changed to `CartesianStripXStereo`.
+
+The remaining cos(α) scale factor (`x_stereo ≠ eBoundLoc0`) was corrected in `MTCSciFiMeasConverter.cpp`:
+
+```cpp
+const double localCoord = cos_a * pos.x;                         // eBoundLoc0 = cos(α)·x_stereo
+const double variance   = cos_a * cos_a * (pitch * pitch) / 12.0; // σ²(eBoundLoc0)
+```
+
+For α = 5° the correction is 0.4%, but the explicit formula is correct for any stereo angle.
+
+---
+
+## Fixed (continued)
+
+### MTC SciFi B-field in ACTS CKF (FIXED)
+
+The `ACTSProtoTracker` `BFieldX/Y/Z` properties default to zero. The fix was to add `IronSlabBField` (a custom `Acts::MagneticFieldProvider`) and populate it from `SND_compact.xml` constants via `parse_geometry.py` in `job4_tracking.py`.
+
+`IronFieldRanges` is set to 45 slabs (3 stations × 15 layers), each covering the 50 mm outer iron absorber at `By = 1.7 T`. Confirmed active in `debug_tracking_31.txt` (line 30: `ACTSProtoTracker.IronFieldRanges [245.0, 295.0, … 3583.8, -301.0, 301.0, -301.0, 301.0, 1.7]`).
+
+`MTCSciFiMeasConverter` and `proto.InputMTC` are correctly wired in `muon_pipeline/job4_tracking.py`.
+
+---
+
+## Open issues
+
+### PropagatorError:2 — propagator hits step-count limit in ~6% of events
+
+**Symptom:** `Propagation reached the configured maximum number of steps with the initial parameters` (PropagatorError:2). Observed in `debug_tracking_31.txt`: events 3 and 43 (all 3 seeds fail → 0 tracks); event 24 seed 1 fails while seeds 0 and 2 succeed.
+
+**Root cause:** `pOptions.maxSteps` was hardcoded to 10000 with `maxStepSize = 10 mm`. The CKF visits 150 surfaces across ~4 m of detector. For off-axis Hough seeds (event 24 seed 1: loc0 = −93 mm, loc1 = −200 mm, 1 mm inside the ±201 mm slab boundary; events 3/43: all three seeds near the correct muon position) the stepper exhausts its budget before completing the track. The exact trigger per event is not fully understood without step-level diagnostics.
+
+**Fix applied:** `MaxPropSteps` and `MaxStepSize` are now Gaudi properties (defaults: 100 000 steps, 100 mm). At 100 mm steps in 1.7 T / 10 GeV iron the positional error per step is ~0.06 mm — well within the 1 mm SciFi pitch. The old 10 mm cap was unnecessarily tight and contributed to step-count exhaustion.
+
+**To verify:** Re-run `muon_pipeline` after rebuild. Events 3, 24, 43 should no longer show PropagatorError:2.
+
+---
+
+### Event display: stereo U/V assignment was swapped (FIXED — but see "Latent risks" below)
+
+> **Update 2026-05-17:** the diagnostic plots in
+> `gaudi_jobs/muon_pipeline/plots_curvature/` show that with the **current**
+> geometry the reco-y reconstructed by `(loc0_V − loc0_U)/(2·tan 5°)` has the
+> opposite sign of truth-y again. See the latent-risk note below for why this
+> "fix" is convention-dependent and how to test it.
+
+**Symptom:** The reconstructed y coordinate from MTC SciFi stereo pairing had wrong sign in the event display.
+
+**Root cause:** The stereo pairing code in `read_track_states()` assigned `tilt > 0` → U plane and `tilt < 0` → V plane. But the ACTSGeoSvc rotation `R_X(+α)·R_Y(π/2)` for plane 0 gives `stereoTiltZ = +sin(α)` and yields the V-type measurement (`eBoundLoc0 = cos·dd_x + sin·dd_y`), while `tilt < 0` (plane 1, `R_X(−α)`) gives U-type (`cos·dd_x − sin·dd_y`). The assignment was therefore backwards, flipping the sign of `gy = (loc0_V − loc0_U) / (2·tan 5°)`.
+
+Verified: with `tilt > 0`, loc0 = −5.623 mm ≈ cos5°·1.5 + sin5°·(−82) = −5.66 mm → V plane. With `tilt < 0`, loc0 = +8.548 mm ≈ cos5°·1.5 − sin5°·(−82) = +8.64 mm → U plane.
+
+**Fix applied** (`event_display_eve.py`):
+```python
+# Before (wrong):
+loc0_U = loc0  if tilt  > 0 else loc02
+loc0_V = loc02 if tilt  > 0 else loc0
+
+# After (correct):
+loc0_V = loc0  if tilt  > 0 else loc02   # positive tilt → V plane
+loc0_U = loc02 if tilt  > 0 else loc0    # negative tilt → U plane
+```
+
+---
+
+## Latent risks (silent failure modes)
+
+### MTC SciFi stereo `loc0` sign convention — touches 4 unrelated files
+
+The mapping from `eBoundLoc0` on a stereo SciFi plane to the physical
+DD4hep (dd_x, dd_y) depends on **four conventions that must all agree** but
+live in four unrelated files. Flipping any one of them silently flips the
+reconstructed Y on every MTC track. No build error, no runtime warning — only
+the diagnostic plots will reveal it.
+
+**The four conventions:**
+
+| # | Where | What sets the convention |
+|--:|-------|--------------------------|
+| 1 | `simulation/geometry/MTCDetector.xml` | sign of `stereo_angle="…"` on each `CartesianStripXStereo` `key_value` |
+| 2 | `detector_plugin/segmentations/CartesianStripXStereo.cpp` | which perpendicular direction is "+strip-index" for a given `stereo_angle` |
+| 3 | `gaudi_source/ACTSGeoSvc.cpp:273` | sign of `α` in `R_X(±α) · R_Y(π/2)` per `pi.plane` |
+| 4 | `gaudi_source/MTCSciFiMeasConverter.cpp:181` | `cos α · pos.x` — assumes `pos.x` is already the strip centre at y=0 in mm, in the "natural" direction for this α |
+
+If (1)/(2)/(3)/(4) collectively give
+`loc0_plane0 = cos α · dd_x + sin α · dd_y` (the convention `docs/known_issues.md`
+recorded in May 2025), the display formula
+`gy = (loc0_V − loc0_U) / (2 tan α)` with `V = (tilt > 0)` returns `+dd_y`.
+
+If any one of them is flipped, the same formula returns `−dd_y` and the bug
+re-appears on the muon plots without any other symptom — X still tracks
+correctly because the **sum** `loc0_V + loc0_U` is invariant to the sign of the
+`sin α · dd_y` term.
+
+**Empirical test (90 seconds, run after any change to the four files above):**
+
+```bash
+cd gaudi_jobs/muon_pipeline
+python diagnose_mtc_curvature.py --max-windows 5
+# look at plots_curvature/mtc_curvature_w*.pdf
+# if reco y on MTC stations is the *mirror image* of truth y (same magnitude,
+# opposite sign), one of the four conventions has flipped.
+```
+
+**Where to fix when the test fails:**
+
+The single-file remedy is `event_display_eve.py:464-465` and
+`gaudi_jobs/muon_pipeline/diagnose_mtc_curvature.py:115-118` (swap `U`/`V`
+labels, or equivalently flip the subtraction order in `gy`). The root-cause
+remedy is to identify which of the four files changed and revert that change.
+
+Note also that `gaudi_source/ACTSProtoTracker.cpp:1474-1479` (the
+`toGlobalX/toGlobalY` lambdas that write the `x`/`y` RNTuple columns)
+assumes its own convention, documented in the comment block at lines 1467-1473:
+`loc0 = cos α · dd_x − sin α · dd_y`. The diagnostic does **not** read those
+columns (it stereo-pairs `loc0` itself), so the diagnostic sign and the
+RNTuple `y` sign can disagree. Whatever swap is applied to fix the display
+must also be reflected as a sign flip on the `loc0 · stereoTiltZ` term in
+`toGlobalY`, otherwise downstream consumers of the `y` column will be off.
+
+### No surface material on ACTS tracking geometry — CKF MS/EL flags are no-ops
+
+`ACTSGeoSvc.cpp:287-303` constructs each `PlaneLayer` from bare
+`SNDDetectorElement(bounds, transform, thickness)` with no
+`Acts::HomogeneousSurfaceMaterial` attached. Acts' `KalmanFitter` /
+`CombinatorialKalmanFilter` MS process-noise term reads
+`surface->surfaceMaterial()` and contributes zero when it's null.
+
+Consequence: turning on
+`/*multipleScattering=*/true, /*energyLoss=*/true` in the CKF options
+(`ACTSProtoTracker.cpp:1340-1341`) currently has no effect — the KF still
+treats the 50 mm-per-layer MTC iron as vacuum and absorbs each MS kick into
+fitted q/p, biasing momentum downward and producing the over-curvature
+documented in `gaudi_jobs/muon_pipeline/MTC_OVERCURVATURE_FINDINGS.md`.
+
+A proper material model can't be done by manually attaching a hard-coded iron
+slab to every surface — SiTarget is ~0.3 mm Si, SiPad is silicon + tungsten
+absorber, MTC SciFi planes are 0.5 mm scintillating fibre with 50 mm iron
+*between* layers as a passive boundary. The clean solution is to let ACTS read
+the material directly from the DD4hep volume tree via
+`Acts::convertDD4hepDetector` (in `ActsExamples`) or the equivalent
+`Acts::DD4hepDetectorSurfaceFactory`/`DD4hepLayerBuilder`. See the migration
+plan in [`acts_material_migration.md`](acts_material_migration.md).

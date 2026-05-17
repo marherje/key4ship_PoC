@@ -384,6 +384,16 @@ private:
       "Maximum number of measurements accepted per surface by "
       "MeasurementSelector during CKF track finding."};
 
+  Gaudi::Property<int> m_maxPropSteps{
+      this, "MaxPropSteps", 100000,
+      "Maximum number of propagation steps allowed by the CKF EigenStepper. "
+      "Increase if PropagatorError:2 occurs (step-count limit hit)."};
+
+  Gaudi::Property<double> m_maxStepSize{
+      this, "MaxStepSize", 100.0,
+      "Maximum single-step size [mm] for the CKF EigenStepper. "
+      "100 mm gives ~0.06 mm position error per step at 1.7 T / 10 GeV."};
+
   // Track/shower classification: maximum crossing multiplicity per station.
   // For each Hough peak, multiplicity = nCompatCrossings / nCompatStations.
   //   Track:  1 StripX x 1 StripY per station → multiplicity ≈ 1-4
@@ -1187,15 +1197,15 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
 
     // Shared seed covariance (loose — same for all seeds)
     Acts::BoundSquareMatrix seedCov = Acts::BoundSquareMatrix::Zero();
-    seedCov(Acts::eBoundLoc0,   Acts::eBoundLoc0)   = 1e6;
-    seedCov(Acts::eBoundLoc1,   Acts::eBoundLoc1)   = 1e6;
+    seedCov(Acts::eBoundLoc0,   Acts::eBoundLoc0)   = 1e3;
+    seedCov(Acts::eBoundLoc1,   Acts::eBoundLoc1)   = 1e3;
     seedCov(Acts::eBoundPhi,    Acts::eBoundPhi)     = 1.0;
     seedCov(Acts::eBoundTheta,  Acts::eBoundTheta)   = 1.0;
-    seedCov(Acts::eBoundQOverP, Acts::eBoundQOverP)  = 10.0;
+    seedCov(Acts::eBoundQOverP, Acts::eBoundQOverP)  = 0.04;
     seedCov(Acts::eBoundTime,   Acts::eBoundTime)    = 1e9;
 
     const double seedQoverP =
-        1.0 / (m_seedMomentum.value() * Acts::UnitConstants::GeV);
+        -1.0 / (m_seedMomentum.value() * Acts::UnitConstants::GeV);
 
     // ---- Build seed list (auto or manual) -----------------------------------
     // Each entry is (dd_x, dd_y, dd_z) in DD4hep convention.
@@ -1320,15 +1330,15 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
       // ---- CKF options ------------------------------------------------------
       Acts::PropagatorPlainOptions pOptions(gctx, m_mctx);
       pOptions.direction = Acts::Direction::Forward();
-      pOptions.stepping.maxStepSize = 10.0;
-      pOptions.maxSteps = 10000;
+      pOptions.stepping.maxStepSize = m_maxStepSize.value();
+      pOptions.maxSteps = static_cast<std::size_t>(m_maxPropSteps.value());
 
       Acts::CombinatorialKalmanFilterOptions<SNDTrackContainer> ckfOptions(
           gctx, m_mctx, std::cref(m_cctx),
           ckfExtensions,
           pOptions,
-          /*multipleScattering=*/false,
-          /*energyLoss=*/false);
+          true,
+          true);
 
       // ---- Seed surface diagnostic ------------------------------------------
       if (evtNum < 1 && iSeed == 0) {
@@ -1441,22 +1451,60 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
               edm4ts.location  = edm4hep::TrackState::AtOther;
               edm4ts.D0        = 0.0f;
               edm4ts.Z0        = 0.0f;
+              const auto& surf  = ts.referenceSurface();
+              const float beamZ = static_cast<float>(surf.center(gctx).x());
+
+              // Detect stereo rotation: R * ŷ projected onto ACTS Z = sin(±α).
+              // Non-stereo surfaces have stereoTiltZ ≈ 0; MTC SciFi U/V have ±sin(α).
+              const Acts::Vector3 localYinGlobal =
+                  surf.transform(gctx).rotation() * Acts::Vector3::UnitY();
+              const double stereoTiltZ = localYinGlobal.z();  // sin(+α) or sin(−α)
+              const double cosAlpha    = localYinGlobal.y();  // cos(α), > 0 always
+              // Store surface tilt in omega for stereo pairing in display.
+              // Non-stereo surfaces have omega≈0; MTC SciFi U/V have ±sin(5°).
+              edm4ts.omega = static_cast<float>(stereoTiltZ);
+
+              // Measurement convention on stereo surfaces:
+              //   loc0 = cos(α)·dd_x − sin(α)·dd_y   (= −eBoundLoc0_geometric)
+              //   loc1 = cos(α)·dd_y + sin(α)·dd_x   (=  eBoundLoc1_geometric)
+              // Inverse rotation recovers DD4hep coordinates:
+              //   dd_x =  loc0·cosAlpha + loc1·stereoTiltZ
+              //   dd_y = −loc0·stereoTiltZ + loc1·cosAlpha
+              // For non-stereo surfaces: stereoTiltZ=0, cosAlpha=1 → dd_x=loc0, dd_y=loc1.
+              auto toGlobalX = [&](double loc0, double loc1) -> float {
+                return static_cast<float>(loc0 * cosAlpha + loc1 * stereoTiltZ);
+              };
+              auto toGlobalY = [&](double loc0, double loc1) -> float {
+                return static_cast<float>(-loc0 * stereoTiltZ + loc1 * cosAlpha);
+              };
+
               if (ts.hasSmoothed()) {
                 edm4ts.phi       = static_cast<float>(
                     ts.smoothed()[Acts::eBoundPhi]);
                 edm4ts.tanLambda = static_cast<float>(
                     std::tan(M_PI / 2.0 - ts.smoothed()[Acts::eBoundTheta]));
-                edm4ts.omega     = static_cast<float>(
-                    ts.smoothed()[Acts::eBoundQOverP]);
+                const double loc0 = ts.smoothed()[Acts::eBoundLoc0];
+                const double loc1 = ts.smoothed()[Acts::eBoundLoc1];
+                edm4ts.D0 = static_cast<float>(loc0);  // raw strip measurement for stereo pairing
+                edm4ts.referencePoint = edm4hep::Vector3f{
+                    toGlobalX(loc0, loc1),
+                    toGlobalY(loc0, loc1),
+                    beamZ};
               } else if (ts.hasFiltered()) {
                 edm4ts.phi       = static_cast<float>(
                     ts.filtered()[Acts::eBoundPhi]);
                 edm4ts.tanLambda = 0.0f;
-                edm4ts.omega     = 0.0f;
+                const double loc0 = ts.filtered()[Acts::eBoundLoc0];
+                const double loc1 = ts.filtered()[Acts::eBoundLoc1];
+                edm4ts.D0 = static_cast<float>(loc0);  // raw strip measurement for stereo pairing
+                edm4ts.referencePoint = edm4hep::Vector3f{
+                    toGlobalX(loc0, loc1),
+                    toGlobalY(loc0, loc1),
+                    beamZ};
               } else {
                 edm4ts.phi       = 0.0f;
                 edm4ts.tanLambda = 0.0f;
-                edm4ts.omega     = 0.0f;
+                edm4ts.referencePoint = edm4hep::Vector3f{0.f, 0.f, beamZ};
               }
               track.addToTrackStates(edm4ts);
             }
