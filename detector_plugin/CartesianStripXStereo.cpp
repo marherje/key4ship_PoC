@@ -28,7 +28,7 @@ public:
          const DDSegmentation::Vector3D& /*globalPosition*/,
          const DDSegmentation::VolumeID& volumeID) const override {
     const double tan_a    = std::tan(_stereoAngle * M_PI / 180.0);
-    const double x_stereo = localPosition.X + localPosition.Y * tan_a;
+    const double x_stereo = localPosition.X - localPosition.Y * tan_a;
     DDSegmentation::CellID cID = volumeID;
     _decoder->set(cID, _xId, positionToBin(x_stereo, _stripSizeX, _offsetX));
     return cID;

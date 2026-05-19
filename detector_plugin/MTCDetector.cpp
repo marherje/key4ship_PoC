@@ -103,7 +103,7 @@ dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
     // without rotating the volume, so the slice stays within the station envelope.
     double cos_a      = std::cos(ang_deg * M_PI / 180.0);
     double sin_a      = std::sin(ang_deg * M_PI / 180.0);
-    double alpha_para = -std::atan(sin_a) * 180.0 / M_PI;  // degrees, U plane
+    double alpha_para = std::atan(sin_a) * 180.0 / M_PI;   // degrees, U plane
     double scifi_dx   = env_w / 2.0 - (env_h / 2.0) * sin_a;             // half-width of SciFi slice
 
     dd4hep::printout(dd4hep::INFO, "MTCDetector",

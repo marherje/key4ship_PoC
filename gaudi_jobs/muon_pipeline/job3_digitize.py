@@ -2,6 +2,12 @@ from k4FWCore import ApplicationMgr, IOSvc
 from Configurables import GeV2MIPConversion, BasicDigitizer, SciFiDigitizer
 from Gaudi.Configuration import MessageSvc, DEBUG
 import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "simulation" / "geometry"))
+from parse_geometry import SNDGeometry
+geo = SNDGeometry()
 
 # Take file name from environment variable
 infile = os.environ.get("INPUT_FILE", "")
@@ -49,7 +55,7 @@ dig_2.DebugFrequency = 500
 mip_3 = GeV2MIPConversion("GeV2MIP_MTCSciFi")
 mip_3.InputCollection  = "MTCSciFiHitsWindowed"
 mip_3.OutputCollection = "MTCSciFiHitsMIP"
-mip_3.MIPValue = 2e-3*1.35
+mip_3.MIPValue = geo.mtc_scifi_mip_value
 
 # SciFi Digitizer: light attenuation + Poisson + SiPM saturation + QDC
 # Geometry and physics parameters from SND_compact.xml / FairRoot MTCDetHit model.
@@ -57,9 +63,9 @@ mip_3.MIPValue = 2e-3*1.35
 scifi_digi = SciFiDigitizer("SciFiDigitizer_MTCSciFi")
 scifi_digi.InputCollection   = "MTCSciFiHitsWindowed"
 scifi_digi.OutputCollection  = "MTCSciFiHitsDigi"
-# Fiber geometry (from SND_compact.xml)
-scifi_digi.FiberAngleDeg  = 5.0                     # MTC_fiber_angle_deg
-scifi_digi.EnvHeightHalf  = [200.0, 250.0, 300.0]   # mm; MTC40/50/60 env_height / 2
+# Fiber geometry (from SND_compact.xml via parse_geometry)
+scifi_digi.FiberAngleDeg  = geo.mtc_fiber_angle_deg
+scifi_digi.EnvHeightHalf  = geo.mtc_station_env_half_heights
 scifi_digi.SiPMSide       = +1                      # SiPM at +y end
 # Attenuation model (FairRoot MTCDetHit defaults)
 scifi_digi.AttenuationLength = 300.0   # cm (lambda)
