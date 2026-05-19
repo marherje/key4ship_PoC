@@ -2,28 +2,29 @@ from k4FWCore import ApplicationMgr, IOSvc
 from Configurables import ACTSGeoSvc, SiTargetMeasConverter, \
                           SiPadMeasConverter, MTCSciFiMeasConverter, ACTSProtoTracker
 from Gaudi.Configuration import DEBUG, INFO
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "simulation" / "geometry"))
+from parse_geometry import SNDGeometry
+geo = SNDGeometry()
 
 # ── MTC outer iron magnetic field map ─────────────────────────────────────────
-# MTC_BFIELD_Y must match MTC_BFieldY in simulation/geometry/SND_compact.xml.
-# All geometry constants below must mirror the SND_compact.xml <define> block.
-MTC_BFIELD_Y    = 1.7    # Tesla
-MTC_FE_THICK    = 50.0   # mm — outer iron absorber (slice 0 per layer)
-MTC_LAYER_THICK = 74.7   # mm — 50+3+1.35+1+1.35+3+15
-MTC_N_LAYERS    = 15
-ECAL_DIM_Z      = 20 * (3.5 + 11.0)   # 290 mm  (Ecal_NLayers × Ecal_LayerThickness)
-MTC_TOTAL_LEN   = MTC_N_LAYERS * MTC_LAYER_THICK   # 1120.5 mm
-MTC_INTER_GAP   = 1.0    # mm
+# All geometry constants come from SND_compact.xml via SNDGeometry.
+MTC_BFIELD_Y    = geo.mtc_bfield_y
+MTC_FE_THICK    = geo.mtc_outer_fe_thick
+MTC_LAYER_THICK = geo.mtc_layer_thick
+MTC_N_LAYERS    = geo.mtc_n_layers
+MTC_TOTAL_LEN   = MTC_N_LAYERS * MTC_LAYER_THICK
+MTC_INTER_GAP   = geo.mtc_inter_gap
 
-MTC40_Z = ECAL_DIM_Z / 2.0 + 600.0 + MTC_TOTAL_LEN / 2.0
-MTC50_Z = MTC40_Z + MTC_TOTAL_LEN + MTC_INTER_GAP
-MTC60_Z = MTC50_Z + MTC_TOTAL_LEN + MTC_INTER_GAP
+MTC40_Z, MTC50_Z, MTC60_Z = geo.mtc_station_z_centers
 
 # Station (z_center, ACTS-Y half-size, ACTS-Z half-size) in mm + 1 mm margin.
 # ACTS coords: x = beam axis (= DD4hep Z), y = DD4hep Y, z = DD4hep X.
 _station_params = [
-    (MTC40_Z, 201.0, 201.0),
-    (MTC50_Z, 251.0, 251.0),
-    (MTC60_Z, 301.0, 301.0),
+    (z, h + 1.0, h + 1.0)
+    for z, h in zip(geo.mtc_station_z_centers, geo.mtc_station_env_half_heights)
 ]
 # Flat list: [xlo, xhi, ylo, yhi, zlo, zhi, by] per outer iron slab
 _iron_ranges = []
@@ -50,31 +51,31 @@ sitarget_conv = SiTargetMeasConverter("SiTargetMeasConverter")
 sitarget_conv.GeoSvc           = "ACTSGeoSvc"
 sitarget_conv.InputCollection  = "SiTargetHitsWindowed"
 sitarget_conv.OutputCollection = "SiTargetMeasurements"
-sitarget_conv.BitField         = "system:8,layer:8,slice:4,plane:1,column:2,row:2,strip:14"
-sitarget_conv.StripPitch       = 0.0755
-sitarget_conv.NSensorCols  = 4
-sitarget_conv.NSensorRows  = 2
-sitarget_conv.SensorWidth  = 99.25
-sitarget_conv.SensorHeight = 199.5
-sitarget_conv.SensorGap    = 1.0
+sitarget_conv.BitField         = geo.bitfields["SiTargetHits"]
+sitarget_conv.StripPitch       = geo.sitarget_strip_pitch
+sitarget_conv.NSensorCols  = geo.sitarget_sensor_ncols
+sitarget_conv.NSensorRows  = geo.sitarget_sensor_nrows
+sitarget_conv.SensorWidth  = geo.sitarget_sensor_width
+sitarget_conv.SensorHeight = geo.sitarget_sensor_height
+sitarget_conv.SensorGap    = geo.sitarget_sensor_gap
 sitarget_conv.OutputLevel      = DEBUG
 
 sipad_conv = SiPadMeasConverter("SiPadMeasConverter")
 sipad_conv.GeoSvc           = "ACTSGeoSvc"
 sipad_conv.InputCollection  = "SiPadHitsWindowed"
 sipad_conv.OutputCollection = "SiPadMeasurements"
-sipad_conv.BitField         = "system:8,layer:8,slice:4,x:9,y:9"
-sipad_conv.PixelSizeX       = 5.5
-sipad_conv.PixelSizeY       = 5.5
+sipad_conv.BitField         = geo.bitfields["SiPadHits"]
+sipad_conv.PixelSizeX       = geo.ecal_cell_size_x
+sipad_conv.PixelSizeY       = geo.ecal_cell_size_y
 sipad_conv.OutputLevel      = DEBUG
 
 mtcscifi_conv = MTCSciFiMeasConverter("MTCSciFiMeasConverter")
 mtcscifi_conv.GeoSvc           = "ACTSGeoSvc"
 mtcscifi_conv.InputCollection  = "MTCSciFiHitsWindowed"
 mtcscifi_conv.OutputCollection = "MTCSciFiMeasurements"
-mtcscifi_conv.BitField         = "system:8,station:2,layer:8,slice:4,plane:2,strip:14,x:9,y:9"
-mtcscifi_conv.StripPitch       = 1.0   # mm
-mtcscifi_conv.StereoAngleDeg   = 5.0
+mtcscifi_conv.BitField         = geo.bitfields["MTCDetHits"]
+mtcscifi_conv.StripPitch       = geo.mtc_scifi_channel_size
+mtcscifi_conv.StereoAngleDeg   = geo.mtc_fiber_angle_deg
 mtcscifi_conv.OutputLevel      = DEBUG
 
 proto = ACTSProtoTracker("ACTSProtoTracker")
@@ -82,7 +83,7 @@ proto.GeoSvc           = "ACTSGeoSvc"
 proto.InputSiTarget    = "SiTargetMeasurements"
 proto.InputSiPad       = "SiPadMeasurements"
 proto.InputMTC         = "MTCSciFiMeasurements"
-proto.MTCStereoAngle   = 5.0
+proto.MTCStereoAngle   = geo.mtc_fiber_angle_deg
 proto.OutputCollection = "ACTSTracks"
 proto.IronFieldRanges  = _iron_ranges  # MultiRangeBField in MTC outer iron slabs
 # Hough Transform automatic seeding
@@ -92,7 +93,7 @@ proto.HoughBinSize     = 5.0    # mm — coarser ok since we use 2D crossings
 proto.HoughHalfSize    = 200.0  # mm
 proto.HoughMinVotes    = 3      # crossings: each station contributes 1 crossing
 proto.SeedCompatRadius = 8.0    # mm — radius for centroid refinement
-proto.SeedStripPitch   = 0.0755 # mm — SiTarget strip pitch
+proto.SeedStripPitch   = geo.sitarget_strip_pitch
 proto.SeedMomentum     = 10.0   # GeV
 proto.MaxChi2PerMeas        = 500.0
 proto.HoughMaxMultiplicity  = 10.0  # safety net after isolation filter
