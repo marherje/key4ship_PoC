@@ -1,0 +1,6 @@
+# ACTS issues
+
+1. Why the `gaudi_jobs/muon_pipeline/diagnose_mtc_curvature.py` shows the true track with some weird unrealistic changes of the coordinates in some planes? Principle of the true tracking info extraction? ANSWER: the simulation output does not store all the information about secondary particles and assign it to the primary particle.
+2. In the reco tracks there are definitely outliers in the end of the track that are far away from already existing reconstructed trajectory. Why doesn't CKF filter/correctly finding them? ANSWER: inconstrained loc1 problem, the best fix is to start pairing hits in U-V planes and pass it to CKF.
+3. Combining all three detectors: the quality of the fit in the MTC part drops significantly both in 2 projections z-x and z-y: under and overestimates in z-x and flipped trajectories in the z-y (that are not present if only MTC used for tracking). Why? ANSWER: material fix, detector fix, 2d pairing points fix.
+4. Output of the ACTS: is it the coorindates of the existing hits that assigned to the track or the new points (analogy with the linear regression that creates basically the new line with the new points closest to the expected real distribution)? ANSWER: these are the new points.
