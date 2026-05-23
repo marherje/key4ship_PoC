@@ -76,6 +76,12 @@ mtcscifi_conv.OutputCollection = "MTCSciFiMeasurements"
 mtcscifi_conv.BitField         = geo.bitfields["MTCDetHits"]
 mtcscifi_conv.StripPitch       = geo.mtc_scifi_channel_size
 mtcscifi_conv.StereoAngleDeg   = geo.mtc_fiber_angle_deg
+# U/V preselection strategy. "AllPairs" emits one 2D measurement per U×V combo
+# on the combined surface (constrains y per-layer, kills the stereo y-drift).
+# Set to "None" to fall back to the per-plane 1D emission (legacy).
+mtcscifi_conv.PairMethod       = "AllPairs"
+# mtcscifi_conv.PairMethod       = "None"
+mtcscifi_conv.PairMaxDz        = 25.0   # mm — accept U/V partners within this Δz
 mtcscifi_conv.OutputLevel      = DEBUG
 
 proto = ACTSProtoTracker("ACTSProtoTracker")
@@ -94,11 +100,11 @@ proto.HoughHalfSize    = 200.0  # mm
 proto.HoughMinVotes    = 3      # crossings: each station contributes 1 crossing
 proto.SeedCompatRadius = 8.0    # mm — radius for centroid refinement
 proto.SeedStripPitch   = geo.sitarget_strip_pitch
-proto.SeedMomentum     = 5.0   # GeV
-proto.MaxChi2PerMeas        = 500.0
+proto.SeedMomentum     = 3.0   # GeV
+proto.MaxChi2PerNdf         = 10.0
 proto.HoughMaxMultiplicity  = 10.0  # safety net after isolation filter
 # CKF MeasurementSelector: per-surface chi2 cut and max measurements
-proto.Chi2CutOff            = 15.0  # local chi2 to accept a measurement
+proto.Chi2CutOff            = 70.0  # local chi2 to accept a measurement
 proto.NumMeasCutOff         = 1     # max measurements per surface
 # Crossing isolation filter for shower rejection
 # Filters crossings (SiTarget) and positions (SiPad) by 2D density

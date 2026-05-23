@@ -294,6 +294,8 @@ public:
 
             auto fLoc0  = tsModel->MakeField<float>("loc0");
             auto fTilt  = tsModel->MakeField<float>("tilt");
+            auto fChi2ts = tsModel->MakeField<float>("chi2");
+            auto fNmeas  = tsModel->MakeField<int>("nmeas");
 
             m_fTsWindowID = fWin.get();
             m_fTsTrackID  = fTrkId.get();
@@ -303,15 +305,19 @@ public:
             m_fTsZ        = fZ.get();
             m_fTsLoc0     = fLoc0.get();
             m_fTsTilt     = fTilt.get();
+            m_fTsChi2     = fChi2ts.get();
+            m_fTsNmeas    = fNmeas.get();
 
             m_tsIntPtrs.push_back(std::move(fWin));
             m_tsIntPtrs.push_back(std::move(fTrkId));
             m_tsIntPtrs.push_back(std::move(fStIdx));
+            m_tsIntPtrs.push_back(std::move(fNmeas));
             m_tsFloatPtrs.push_back(std::move(fX));
             m_tsFloatPtrs.push_back(std::move(fY));
             m_tsFloatPtrs.push_back(std::move(fZ));
             m_tsFloatPtrs.push_back(std::move(fLoc0));
             m_tsFloatPtrs.push_back(std::move(fTilt));
+            m_tsFloatPtrs.push_back(std::move(fChi2ts));
 
             m_trackStatesWriter = ROOT::RNTupleWriter::Append(
                 std::move(tsModel), "ACTSTrackStates", *m_outputTFile);
@@ -499,7 +505,8 @@ public:
                   surfStates.push_back(&ts);
               }
               std::reverse(surfStates.begin(), surfStates.end());
-              for (int si = 0; si < static_cast<int>(surfStates.size()); ++si) {
+              const int nMeasStates = static_cast<int>(surfStates.size());
+              for (int si = 0; si < nMeasStates; ++si) {
                 const auto& ts  = *surfStates[si];
                 *m_fTsWindowID  = static_cast<int>(windowID);
                 *m_fTsTrackID   = iTrack;
@@ -509,6 +516,8 @@ public:
                 *m_fTsZ         = ts.referencePoint.z;
                 *m_fTsLoc0      = ts.D0;     // raw ACTS eBoundLoc0 (strip measurement)
                 *m_fTsTilt      = ts.omega;  // surface stereo tilt: ±sin(α) or 0
+                *m_fTsChi2      = ts.Z0;     // per-state innovation chi² (carried in Z0)
+                *m_fTsNmeas     = nMeasStates;
                 m_trackStatesWriter->Fill();
               }
             }
@@ -714,6 +723,8 @@ private:
   mutable float* m_fTsZ         = nullptr;
   mutable float* m_fTsLoc0      = nullptr;
   mutable float* m_fTsTilt      = nullptr;
+  mutable float* m_fTsChi2      = nullptr;
+  mutable int*   m_fTsNmeas     = nullptr;
   mutable std::vector<std::shared_ptr<int>>   m_tsIntPtrs;
   mutable std::vector<std::shared_ptr<float>> m_tsFloatPtrs;
 

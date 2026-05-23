@@ -65,6 +65,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -369,10 +370,11 @@ private:
       this, "SeedStripPitch", 0.0755,
       "Strip pitch [mm] used for most-frequent-strip seed refinement."};
 
-  Gaudi::Property<double> m_maxChi2PerMeas{
-    this, "MaxChi2PerMeas", 500.0,
-    "Maximum chi2/nMeas threshold for track acceptance. "
-    "Tracks above this threshold are rejected as false seeds."};
+  Gaudi::Property<double> m_maxChi2PerNdf{
+    this, "MaxChi2PerNdf", 500.0,
+    "Maximum chi2/ndf threshold for track acceptance, where "
+    "ndf = Σ calibratedSize − 5 helix params. Tracks above this "
+    "threshold are rejected as false seeds (≈1 = ideal, >>1 = bad fit)."};
 
   Gaudi::Property<double> m_chi2CutOff{
       this, "Chi2CutOff", 15.0,
@@ -601,6 +603,7 @@ std::vector<ACTSProtoTracker::SeedCandidate> ACTSProtoTracker::findSeeds(
 
   // --- Source C: MTC SciFi U×V stereo crossings ---
   // Group by surface Z rounded to 10mm to pair U and V slices of the same layer.
+  // IDEA: drop out unrealistic pairs (e.g. too far away from each other)
   {
     const double tan_stereo = std::tan(m_mtcStereoAngle.value() * M_PI / 180.0);
     const int maxCrossingsPerLayer = 200;
@@ -960,46 +963,46 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
     }
 
     // ---- SiPad (2D pixels) --------------------------------------------------
+    // Surface lookup is address-based via ISNDGeoSvc::surfaceByAddress (detID=1,
+    // station=-1, layer=quality, plane=-1). The layer index is written by
+    // SiPadMeasConverter into TrackerHit3D::quality. This replaces the previous
+    // nearest-z search, which depended on a fragile largest-gap heuristic for the
+    // SiTarget/SiPad/MTC split (broken when MTC inter-station gaps exceed the
+    // inter-detector gaps).
     const auto* spHits = m_siPadHandle->get();
     if (spHits) {
       for (std::size_t i = 0; i < spHits->size(); ++i) {
-        const auto& hit = (*spHits)[i];
-        const auto& pos = hit.getPosition();
+        const auto& hit   = (*spHits)[i];
+        const auto& pos   = hit.getPosition();
+        const int   layer = hit.getQuality();
 
-        const Acts::Surface* bestSurface = nullptr;
-        double bestDist = 1e9;
-        for (std::size_t j = m_nSiTargetSurfaces;
-             j < m_nSiTargetSurfaces + m_nSiPadSurfaces; ++j) {
-          double dz = std::abs(allSurfaces[j]->center(gctx).x() - pos.z);
-          if (dz < bestDist) {
-            bestDist    = dz;
-            bestSurface = allSurfaces[j];
-          }
-        }
-
-        if (!bestSurface) {
+        const Acts::Surface* surf =
+            m_geoSvc->surfaceByAddress(1, -1, layer, -1);
+        if (!surf) {
           warning() << "[ACTSProtoTracker] evt=" << evtNum
-                    << " SiPad hit " << i << " has no matching surface."
-                    << endmsg;
+                    << " SiPad hit " << i << " layer=" << layer
+                    << " has no matching surface." << endmsg;
           continue;
         }
 
         const auto& cov = hit.getCovMatrix();
-        // Z=beam: SiPad measures X and Y (transverse coordinates)
-        measurements.emplace_back(bestSurface, pos.x, pos.y,
+        measurements.emplace_back(surf, pos.x, pos.y,
                                    cov[0], cov[3], true, 1, -1,
                                    hit.getTime(), hit.getEDep());
       }
     }
 
-    // ---- MTC SciFi (1D stereo strips) -----------------------------------------
+    // ---- MTC SciFi (1D stereo strips OR 2D U+V paired) ------------------------
+    // Quality field carries the kind:
+    //   0,1 → 1D on U/V stereo surface (loc0 only)
+    //   3   → 2D on combined flat surface (loc0,loc1) = (X_g,Y_g)
     const auto* mtcHits = m_mtcHandle->get();
     if (mtcHits) {
       for (std::size_t i = 0; i < mtcHits->size(); ++i) {
         const auto& hit   = (*mtcHits)[i];
         const auto& pos   = hit.getPosition();
         const auto& cov   = hit.getCovMatrix();
-        const int   plane = hit.getQuality();  // 0=U, 1=V
+        const int   plane = hit.getQuality();  // 0=U, 1=V, 3=combined
 
         uint64_t cellID = hit.getCellID();
         int station = static_cast<int>((*m_mtcBitField)["station"].value(cellID));
@@ -1014,9 +1017,11 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
           continue;
         }
 
+        const bool is2D = (plane == 3);
         measurements.emplace_back(surf,
-                                   pos.x, 0.0, cov[0], 0.0,
-                                   false, 2, plane,
+                                   pos.x, is2D ? pos.y : 0.0,
+                                   cov[0], is2D ? cov[3] : 0.0,
+                                   is2D, 2, plane,
                                    hit.getTime(), hit.getEDep());
       }
     }
@@ -1079,16 +1084,10 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
                       Acts::VectorMultiTrajectory::TrackStateProxy ts) const {
         const auto& ssl = sl.get<SNDSourceLink>();
         const auto& m   = (*meas)[ssl.index];
-        if (m.detectorID == 2) {
-          // MTC SciFi: 1D on pre-stereo-rotated surface → always eBoundLoc0.
-          ts.allocateCalibrated(1);
-          ts.template calibrated<1>() = Acts::ActsVector<1>(m.localCoord);
-          ts.template calibratedCovariance<1>() =
-              Acts::ActsSquareMatrix<1>{{m.variance}};
-          constexpr std::array<Acts::BoundIndices, 1> mtcIdx = {Acts::eBoundLoc0};
-          ts.setProjectorSubspaceIndices(mtcIdx);
-          return;
-        } else if (m.is2D) {
+        if (m.is2D) {
+          // 2D measurement on a flat (non-stereo) surface:
+          //   • SiPad: (loc0,loc1) = (DD4hep X, DD4hep Y)
+          //   • MTC combined (plane=3): (loc0,loc1) = (X_g, Y_g) from U+V pairing
           constexpr std::array<Acts::BoundIndices, 2> indices = {
               Acts::eBoundLoc0, Acts::eBoundLoc1};
           ts.allocateCalibrated(2);
@@ -1098,24 +1097,33 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
               Acts::ActsSquareMatrix<2>{{m.variance, 0.0},
                                         {0.0, m.variance2}};
           ts.setProjectorSubspaceIndices(indices);
-        } else {
-          // 1D SiTarget strip measurement.
-          // plane=0 (StripX): DD4hep X → global Z → eBoundLoc0
-          // plane=1 (StripY): DD4hep Y → global Y → eBoundLoc1
+          return;
+        }
+        if (m.detectorID == 2) {
+          // MTC SciFi unpaired: 1D on stereo-rotated U/V surface → eBoundLoc0.
           ts.allocateCalibrated(1);
-          ts.template calibrated<1>() =
-              Acts::ActsVector<1>(m.localCoord);
+          ts.template calibrated<1>() = Acts::ActsVector<1>(m.localCoord);
           ts.template calibratedCovariance<1>() =
               Acts::ActsSquareMatrix<1>{{m.variance}};
-          if (m.plane == 1) {
-            constexpr std::array<Acts::BoundIndices, 1> indices = {
-                Acts::eBoundLoc1};
-            ts.setProjectorSubspaceIndices(indices);
-          } else {
-            constexpr std::array<Acts::BoundIndices, 1> indices = {
-                Acts::eBoundLoc0};
-            ts.setProjectorSubspaceIndices(indices);
-          }
+          constexpr std::array<Acts::BoundIndices, 1> mtcIdx = {Acts::eBoundLoc0};
+          ts.setProjectorSubspaceIndices(mtcIdx);
+          return;
+        }
+        // 1D SiTarget strip measurement.
+        // plane=0 (StripX): DD4hep X → global Z → eBoundLoc0
+        // plane=1 (StripY): DD4hep Y → global Y → eBoundLoc1
+        ts.allocateCalibrated(1);
+        ts.template calibrated<1>() = Acts::ActsVector<1>(m.localCoord);
+        ts.template calibratedCovariance<1>() =
+            Acts::ActsSquareMatrix<1>{{m.variance}};
+        if (m.plane == 1) {
+          constexpr std::array<Acts::BoundIndices, 1> indices = {
+              Acts::eBoundLoc1};
+          ts.setProjectorSubspaceIndices(indices);
+        } else {
+          constexpr std::array<Acts::BoundIndices, 1> indices = {
+              Acts::eBoundLoc0};
+          ts.setProjectorSubspaceIndices(indices);
         }
       }
     };
@@ -1197,8 +1205,8 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
 
     // Shared seed covariance (loose — same for all seeds)
     Acts::BoundSquareMatrix seedCov = Acts::BoundSquareMatrix::Zero();
-    seedCov(Acts::eBoundLoc0,   Acts::eBoundLoc0)   = 1e3;
-    seedCov(Acts::eBoundLoc1,   Acts::eBoundLoc1)   = 1e3;
+    seedCov(Acts::eBoundLoc0,   Acts::eBoundLoc0)   = 1e2;
+    seedCov(Acts::eBoundLoc1,   Acts::eBoundLoc1)   = 1e2;
     seedCov(Acts::eBoundPhi,    Acts::eBoundPhi)     = 1.0;
     seedCov(Acts::eBoundTheta,  Acts::eBoundTheta)   = 1.0;
     seedCov(Acts::eBoundQOverP, Acts::eBoundQOverP)  = 0.04;
@@ -1373,22 +1381,33 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
       }
 
       // ---- Process CKF results: select first acceptable track per seed ------
+      // Standard goodness-of-fit convention:
+      //   chi² = Σ per-state innovation chi² (filled by ACTS during filtering)
+      //   ndf  = Σ calibratedSize − n_fit_params   (5 helix params: loc0, loc1,
+      //          phi, theta, q/p; ACTS's nDoF() returns Σ calibratedSize only).
+      // For a well-fit track, chi²/ndf is centered at ≈ 1.
+      constexpr int kHelixParams = 5;
       for (const auto& ckfTrack : ckfTrackVec) {
-        const std::size_t nMeas = ckfTrack.nMeasurements();
+        const std::size_t nMeas    = ckfTrack.nMeasurements();
+        const int         rawDof   = static_cast<int>(ckfTrack.nDoF());
+        const int         ndf      = std::max(1, rawDof - kHelixParams);
+        const double      chi2     = ckfTrack.chi2();
+        const double      chi2Ndf  = chi2 / static_cast<double>(ndf);
 
         debug() << "[ACTSProtoTracker] evt=" << evtNum
                 << " seed=" << iSeed
                 << " CKF nMeas=" << nMeas
                 << " nHoles=" << ckfTrack.nHoles()
-                << " chi2=" << ckfTrack.chi2() << endmsg;
+                << " chi2=" << chi2
+                << " ndf=" << ndf
+                << " chi2/ndf=" << chi2Ndf << endmsg;
 
         if (nMeas < 3) continue;
 
-        const double chi2PerMeas = ckfTrack.chi2() / std::max(1.0, (double)nMeas);
-        if (chi2PerMeas > m_maxChi2PerMeas.value()) {
+        if (chi2Ndf > m_maxChi2PerNdf.value()) {
           debug() << "[ACTSProtoTracker] evt=" << evtNum
                   << " seed=" << iSeed
-                  << " rejected: chi2/nMeas=" << chi2PerMeas << endmsg;
+                  << " rejected: chi2/ndf=" << chi2Ndf << endmsg;
           continue;
         }
 
@@ -1428,8 +1447,8 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
         // ---- Write output --------------------------------------------------
         auto track = output->create();
         track.setType(1);
-        track.setChi2(static_cast<float>(ckfTrack.chi2()));
-        track.setNdf(static_cast<int>(ckfTrack.nDoF()));
+        track.setChi2(static_cast<float>(chi2));
+        track.setNdf(ndf);  // already Σ-dim − 5; downstream uses chi2/ndf directly
 
         // Store seed transverse position as the first TrackState (location=AtIP).
         {
@@ -1441,16 +1460,31 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
         }
 
         // Write per-surface filtered states for event display / analysis.
+        // We first COLLECT each per-surface edm4hep::TrackState in a local
+        // vector, then in a second pass pair-average adjacent U/V stereo
+        // partners (|Δz|<5 mm, opposite-sign omega) into a single TrackState
+        // per layer.  Rationale: on a SciFi strip surface only loc0 receives a
+        // measurement update; the smoothed loc1 stays at the propagated prior.
+        // The bound-to-global rotation then maps any δ_loc1 error into
+        // ±sin(α)·δ in global x and ±cos(α)·δ in y, with the sign flipping
+        // between U(+α) and V(−α) planes — the visible zigzag.  Averaging the
+        // two partners cancels this to first order.  Non-stereo states
+        // (SiTarget, SiPad) and unpaired stereo states are emitted unchanged.
         try {
           auto tipIdx = ckfTrack.tipIndex();
           auto& mutableTraj = ckfTracks.trackStateContainer();
+          std::vector<edm4hep::TrackState> collected;
           while (true) {
             auto ts = mutableTraj.getTrackState(tipIdx);
             if (ts.hasCalibrated()) {
               edm4hep::TrackState edm4ts;
               edm4ts.location  = edm4hep::TrackState::AtOther;
               edm4ts.D0        = 0.0f;
-              edm4ts.Z0        = 0.0f;
+              // Z0 is unused on AtOther states (only AtIP uses it for seed Y).
+              // Carry the per-state innovation chi² here so downstream tools can
+              // see WHICH surface drives the fit quality — track-total chi² is
+              // useless for that.
+              edm4ts.Z0        = static_cast<float>(ts.chi2());
               const auto& surf  = ts.referenceSurface();
               const float beamZ = static_cast<float>(surf.center(gctx).x());
 
@@ -1506,10 +1540,100 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
                 edm4ts.tanLambda = 0.0f;
                 edm4ts.referencePoint = edm4hep::Vector3f{0.f, 0.f, beamZ};
               }
-              track.addToTrackStates(edm4ts);
+
+              collected.push_back(edm4ts);
             }
+
+            // TEMP DIAG (Issue 2/3) — fires for EVERY state (Meas+Outlier+Hole)
+            // for first 3 events. For SiPad investigation: a SiPad surface
+            // should appear here with isHole=1 (or isOutl=1 if chi2 fails);
+            // pred(loc0,loc1) vs meas(loc0,loc1) shows whether the chi2 is
+            // huge (rejected) or small (would be accepted).
+            if (evtNum < 3) {
+              const auto& surfD = ts.referenceSurface();
+              const float zD = static_cast<float>(surfD.center(gctx).x());
+              const auto tf = ts.typeFlags();
+              const bool isMeas = tf.test(Acts::TrackStateFlag::MeasurementFlag);
+              const bool isOutl = tf.test(Acts::TrackStateFlag::OutlierFlag);
+              const bool isHole = tf.test(Acts::TrackStateFlag::HoleFlag);
+              const char* region = (zD < -150.f) ? "SiT"
+                                 : (zD < 250.f)  ? "SiP"
+                                                 : "MTC";
+              double pL0 = 0., pL1 = 0., sL0 = -1., sL1 = -1.;
+              if (ts.hasPredicted()) {
+                pL0 = ts.predicted()[Acts::eBoundLoc0];
+                pL1 = ts.predicted()[Acts::eBoundLoc1];
+                const auto& pc = ts.predictedCovariance();
+                sL0 = std::sqrt(pc(Acts::eBoundLoc0, Acts::eBoundLoc0));
+                sL1 = std::sqrt(pc(Acts::eBoundLoc1, Acts::eBoundLoc1));
+              }
+              std::ostringstream ms;
+              if (ts.hasCalibrated()) {
+                const unsigned cs = ts.calibratedSize();
+                if (cs == 2) {
+                  auto c2 = ts.template calibrated<2>();
+                  ms << " meas(" << c2[0] << "," << c2[1] << ") cs=2";
+                } else if (cs == 1) {
+                  auto c1 = ts.template calibrated<1>();
+                  ms << " meas(" << c1[0] << ",-) cs=1";
+                }
+              }
+              info() << "[ACTSProtoTracker][DIAG-TS] evt=" << evtNum
+                     << " seed=" << iSeed
+                     << " z=" << zD << " " << region
+                     << " M=" << isMeas << " O=" << isOutl << " H=" << isHole
+                     << " pred(" << pL0 << "," << pL1 << ")"
+                     << " sig(" << sL0 << "," << sL1 << ")"
+                     << ms.str()
+                     << endmsg;
+            }
+
             if (!ts.hasPrevious()) break;
             tipIdx = ts.previous();
+          }  // end while (per-surface collect)
+
+          // ---- Pair-average U/V stereo partners ---------------------------
+          // Sort collected states by global z (beam axis), then walk pairs.
+          // Pairing condition: both have nonzero omega (stereo), opposite
+          // sign, and |Δz| < 5 mm.  Output omega is set to 0 to signal
+          // "already paired" to downstream consumers (event display, diag).
+          std::sort(collected.begin(), collected.end(),
+                    [](const edm4hep::TrackState& a,
+                       const edm4hep::TrackState& b) {
+                      return a.referencePoint.z < b.referencePoint.z;
+                    });
+          for (std::size_t i = 0; i < collected.size(); ) {
+            bool didPair = false;
+            if (i + 1 < collected.size()) {
+              const auto& a = collected[i];
+              const auto& b = collected[i + 1];
+              const float dz = std::abs(a.referencePoint.z - b.referencePoint.z);
+              if (std::abs(a.omega) > 0.01f &&
+                  std::abs(b.omega) > 0.01f &&
+                  a.omega * b.omega < 0.0f &&
+                  dz < 5.0f) {
+                edm4hep::TrackState avg;
+                avg.location  = edm4hep::TrackState::AtOther;
+                avg.D0        = 0.0f;     // loc0 not meaningful after pairing
+                // Z0 carries per-state chi²; merged pair gets the sum (each
+                // partner contributed one innovation update with E[chi²]=1).
+                avg.Z0        = a.Z0 + b.Z0;
+                avg.omega     = 0.0f;     // signals "paired/non-stereo"
+                avg.phi       = 0.5f * (a.phi + b.phi);
+                avg.tanLambda = 0.5f * (a.tanLambda + b.tanLambda);
+                avg.referencePoint = edm4hep::Vector3f{
+                    0.5f * (a.referencePoint.x + b.referencePoint.x),
+                    0.5f * (a.referencePoint.y + b.referencePoint.y),
+                    0.5f * (a.referencePoint.z + b.referencePoint.z)};
+                track.addToTrackStates(avg);
+                i += 2;
+                didPair = true;
+              }
+            }
+            if (!didPair) {
+              track.addToTrackStates(collected[i]);
+              ++i;
+            }
           }
         } catch (const std::exception& e) {
           warning() << "[ACTSProtoTracker] evt=" << evtNum

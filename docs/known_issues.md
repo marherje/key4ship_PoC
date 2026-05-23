@@ -209,26 +209,40 @@ RNTuple `y` sign can disagree. Whatever swap is applied to fix the display
 must also be reflected as a sign flip on the `loc0 · stereoTiltZ` term in
 `toGlobalY`, otherwise downstream consumers of the `y` column will be off.
 
-### No surface material on ACTS tracking geometry — CKF MS/EL flags are no-ops
+### No surface material on ACTS tracking geometry — CKF MS/EL flags are no-ops (FIXED — Path B, 2026-05-17)
 
-`ACTSGeoSvc.cpp:287-303` constructs each `PlaneLayer` from bare
-`SNDDetectorElement(bounds, transform, thickness)` with no
-`Acts::HomogeneousSurfaceMaterial` attached. Acts' `KalmanFitter` /
-`CombinatorialKalmanFilter` MS process-noise term reads
-`surface->surfaceMaterial()` and contributes zero when it's null.
+**Was:** `ACTSGeoSvc.cpp` constructed each `PlaneLayer` with no
+`Acts::HomogeneousSurfaceMaterial` attached. The CKF MS/EL flags at
+`ACTSProtoTracker.cpp:1340-1341` were no-ops; 50 mm MTC iron per layer was
+treated as vacuum, biasing q/p and producing 3–10× over-curvature.
 
-Consequence: turning on
-`/*multipleScattering=*/true, /*energyLoss=*/true` in the CKF options
-(`ACTSProtoTracker.cpp:1340-1341`) currently has no effect — the KF still
-treats the 50 mm-per-layer MTC iron as vacuum and absorbs each MS kick into
-fitted q/p, biasing momentum downward and producing the over-curvature
-documented in `gaudi_jobs/muon_pipeline/MTC_OVERCURVATURE_FINDINGS.md`.
+**Fix applied (Path B from [`acts_material_migration.md`](acts_material_migration.md)):**
+A `makeSlab` helper in `ACTSGeoSvc.cpp` (anonymous namespace) queries DD4hep's
+already-loaded material database by name and constructs an `Acts::MaterialSlab`.
+After each `PlaneLayer::create(...)` call, `detElem->surface().assignSurfaceMaterial()`
+attaches a `HomogeneousSurfaceMaterial` keyed on `pi.detID` and `pi.plane`:
 
-A proper material model can't be done by manually attaching a hard-coded iron
-slab to every surface — SiTarget is ~0.3 mm Si, SiPad is silicon + tungsten
-absorber, MTC SciFi planes are 0.5 mm scintillating fibre with 50 mm iron
-*between* layers as a passive boundary. The clean solution is to let ACTS read
-the material directly from the DD4hep volume tree via
-`Acts::convertDD4hepDetector` (in `ActsExamples`) or the equivalent
-`Acts::DD4hepDetectorSurfaceFactory`/`DD4hepLayerBuilder`. See the migration
-plan in [`acts_material_migration.md`](acts_material_migration.md).
+| Subdetector | Plane | Material assigned |
+|---|---|---|
+| SiTarget (detID=0) | plane=0 (X) | TungstenDens1910(3.5mm) + Silicon(0.3mm) |
+| SiTarget (detID=0) | plane=1 (Y) | Silicon(0.3mm) |
+| SiPad (detID=1) | plane=−1 | TungstenDens1910(3.5mm) + Silicon(0.65mm) |
+| MTC SciFi (detID=2) | plane=0 (U) | Iron(53mm) + Scintillator(1.35mm) |
+| MTC SciFi (detID=2) | plane=1 (V) | Scintillator(1.35mm) |
+| MTC Scint (detID=2) | plane=2 | Iron(3mm) + Scintillator(15mm) |
+
+Material properties (X₀, L₀, ρ, A, Z) come from `dd4hep::Detector::material(name)`;
+DD4hep `radLength()`/`intLength()` return cm, multiplied by 10 for ACTS mm.
+`MaterialSlab::combineLayers` is used to fold absorber + sensor into one effective slab.
+
+**Verification:** Static log at GeoSvc init: `MatDump: X0=3.83mm L0=111mm t=3.8mm`
+(first SiTarget surface; W X₀≈3.5mm dominates, total t=3.5+0.3=3.8mm — matches PDG).
+
+**Result (50-event muon pipeline, post-fix):**
+- Median |R_truth/R_reco| = **0.94** (was 3–10×); reco within 6% of truth
+- Median reco |dx| through MTC: **1–6 mm mean, 10–20 mm max** (was 1600–3400 mm)
+- Sign agreement: 22/26 = 85% (4 outliers; seeding ghosts, not material-related)
+
+**Follow-up (Path A):** Full `Acts::convertDD4hepDetector` migration remains the
+long-term goal (single source of truth, passive iron layers as genuine ACTS layers).
+See [`acts_material_migration.md`](acts_material_migration.md).

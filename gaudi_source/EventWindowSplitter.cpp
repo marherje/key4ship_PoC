@@ -21,6 +21,7 @@ struct ContribData {
   // because edm4hep::CaloHitContribution has no dedicated source field.
   // PDG is not used downstream in this pipeline.
   int   source_id;
+  int   pdg;         // real Geant4 PDG code, read from the SiTarget/SiPad/MTCSciFi/MTCScintContribPDGs parameter
   // Exact Geant4 step position inside the sensitive volume
   float stepX, stepY, stepZ;
   // Centre of the parent SimCalorimeterHit sensitive volume
@@ -96,6 +97,17 @@ public:
       std::vector<int> sourceIDsMTCScint =
           frame.getParameter<std::vector<int>>("MTCScintSourceIDs").value_or(std::vector<int>{});
 
+      // Read per-contribution real Geant4 PDG codes written by EventShuffler.
+      // value_or({}) provides backward compatibility with files that pre-date this feature.
+      std::vector<int> pdgsSiTarget =
+          frame.getParameter<std::vector<int>>("SiTargetContribPDGs").value_or(std::vector<int>{});
+      std::vector<int> pdgsSiPad =
+          frame.getParameter<std::vector<int>>("SiPadContribPDGs").value_or(std::vector<int>{});
+      std::vector<int> pdgsMTCSciFi =
+          frame.getParameter<std::vector<int>>("MTCSciFiContribPDGs").value_or(std::vector<int>{});
+      std::vector<int> pdgsMTCScint =
+          frame.getParameter<std::vector<int>>("MTCScintContribPDGs").value_or(std::vector<int>{});
+
       auto makeSourceMap = [](const edm4hep::SimCalorimeterHitCollection& coll,
                               const std::vector<int>& ids) {
         std::unordered_map<uint64_t, int> m;
@@ -112,16 +124,23 @@ public:
       auto mtcScintSourceMap = makeSourceMap(inScint,  sourceIDsMTCScint);
 
       // --- 1. Build flat, sorted lists of timed contributions ---
-      auto buildList = [](const edm4hep::SimCalorimeterHitCollection& coll)
+      // pdgVec is parallel to the contributions across all hits in visitation order.
+      // If pdgVec is empty (backward compatibility), cd.pdg defaults to 0.
+      auto buildList = [](const edm4hep::SimCalorimeterHitCollection& coll,
+                          const std::vector<int>& pdgVec)
           -> std::vector<TimedContrib> {
         std::vector<TimedContrib> list;
+        size_t pdgIdx = 0;
         for (const auto& hit : coll) {
           const auto& hp = hit.getPosition();
           for (const auto& contrib : hit.getContributions()) {
             const auto& sp = contrib.getStepPosition();
+            const int realPDG = (pdgIdx < pdgVec.size()) ? pdgVec[pdgIdx] : 0;
+            ++pdgIdx;
             list.push_back({hit.getCellID(),
                             {contrib.getEnergy(), contrib.getTime(),
                              contrib.getPDG(),  // source_id encoded in PDG field by EventShuffler
+                             realPDG,
                              sp.x, sp.y, sp.z,
                              hp.x, hp.y, hp.z}});
           }
@@ -133,10 +152,10 @@ public:
         return list;
       };
 
-      const auto siTargetList = buildList(inTarget);
-      const auto siPadList    = buildList(inPad);
-      const auto mtcSciFiList = buildList(inSciFi);
-      const auto mtcScintList = buildList(inScint);
+      const auto siTargetList = buildList(inTarget, pdgsSiTarget);
+      const auto siPadList    = buildList(inPad,    pdgsSiPad);
+      const auto mtcSciFiList = buildList(inSciFi,  pdgsMTCSciFi);
+      const auto mtcScintList = buildList(inScint,  pdgsMTCScint);
 
       if (siTargetList.empty() && siPadList.empty() &&
           mtcSciFiList.empty() && mtcScintList.empty()) {
@@ -181,7 +200,8 @@ public:
       podio::ROOTWriter writer(m_outputFile.value());
       long long totalContribs = 0;
 
-      // Returns hits collection, contributions collection, and parallel source_id vector.
+      // Returns hits collection, contributions collection, parallel source_id vector,
+      // and parallel per-contribution real PDG vector.
       auto buildWindowColl =
           [&](int wIdx,
               float t_window_start,
@@ -189,13 +209,15 @@ public:
               const std::unordered_map<uint64_t, int>& sourceMap)
           -> std::tuple<edm4hep::SimCalorimeterHitCollection,
                         edm4hep::CaloHitContributionCollection,
+                        std::vector<int>,
                         std::vector<int>> {
         edm4hep::SimCalorimeterHitCollection   hits;
         edm4hep::CaloHitContributionCollection contribs;
         std::vector<int> sourceIDs;
+        std::vector<int> contribPDGs;  // per-contribution real Geant4 PDG codes
 
         auto it = windows.find(wIdx);
-        if (it == windows.end()) return {std::move(hits), std::move(contribs), std::move(sourceIDs)};
+        if (it == windows.end()) return {std::move(hits), std::move(contribs), std::move(sourceIDs), std::move(contribPDGs)};
 
         for (const auto& [cellID, contribVec] : it->second) {
           auto hit = hits.create();
@@ -213,12 +235,13 @@ public:
             contrib.setPDG(cd.source_id);
             contrib.setStepPosition({cd.stepX, cd.stepY, cd.stepZ});
             hit.addToContributions(contrib);
+            contribPDGs.push_back(cd.pdg);  // parallel real PDG (per contribution)
             totalE += cd.energy;
             ++totalContribs;
           }
           hit.setEnergy(totalE);
         }
-        return {std::move(hits), std::move(contribs), std::move(sourceIDs)};
+        return {std::move(hits), std::move(contribs), std::move(sourceIDs), std::move(contribPDGs)};
       };
 
       for (int wIdx = 0; wIdx < numWindows; ++wIdx) {
@@ -226,13 +249,13 @@ public:
             t_start + static_cast<float>(wIdx) * static_cast<float>(m_windowSize);
         podio::Frame windowFrame;
 
-        auto [siTargetColl,  siTargetContribs,  wSrcTarget]  =
+        auto [siTargetColl,  siTargetContribs,  wSrcTarget,  wPdgTarget]  =
             buildWindowColl(wIdx, t_window_start, windowsSiTarget,  siTargetSourceMap);
-        auto [siPadColl,    siPadContribs,    wSrcPad]    =
+        auto [siPadColl,    siPadContribs,    wSrcPad,    wPdgPad]    =
             buildWindowColl(wIdx, t_window_start, windowsSiPad,     siPadSourceMap);
-        auto [mtcSciFiColl, mtcSciFiContribs, wSrcSciFi]  =
+        auto [mtcSciFiColl, mtcSciFiContribs, wSrcSciFi,  wPdgSciFi]  =
             buildWindowColl(wIdx, t_window_start, windowsMTCSciFi,  mtcSciFiSourceMap);
-        auto [mtcScintColl, mtcScintContribs, wSrcScint]  =
+        auto [mtcScintColl, mtcScintContribs, wSrcScint,  wPdgScint]  =
             buildWindowColl(wIdx, t_window_start, windowsMTCScint,  mtcScintSourceMap);
 
         windowFrame.put(std::move(siTargetColl),    m_outTargetName.value());
@@ -248,6 +271,11 @@ public:
         windowFrame.putParameter("SiPadSourceIDs",    wSrcPad);
         windowFrame.putParameter("MTCSciFiSourceIDs", wSrcSciFi);
         windowFrame.putParameter("MTCScintSourceIDs", wSrcScint);
+        // Per-contribution real Geant4 PDG codes (parallel to *_Contributions collections)
+        windowFrame.putParameter("SiTargetContribPDGs", wPdgTarget);
+        windowFrame.putParameter("SiPadContribPDGs",    wPdgPad);
+        windowFrame.putParameter("MTCSciFiContribPDGs", wPdgSciFi);
+        windowFrame.putParameter("MTCScintContribPDGs", wPdgScint);
         windowFrame.putParameter("t_window_start",    t_window_start);
 
         writer.writeFrame(windowFrame, "events");
