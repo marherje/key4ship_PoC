@@ -205,7 +205,7 @@ def build_hits(eve, hits_file, window_id, config):
 
         for i in range(len(xs)):
             xc = xs[i] * mm2cm
-            yc = ys[i] * mm2cm
+            yc = 0.0 if stereo_deg != 0.0 else ys[i] * mm2cm
             zc = zs[i] * mm2cm
             snap_z = nearest_plane(np.array([zc]) if type(zc) == float else zc, layers_z)
             if not (z_min <= snap_z <= z_max):
@@ -461,8 +461,8 @@ def read_track_states(hits_file, window_id):
                 if i + 1 < len(states):
                     _, _, z2, loc02, tilt2 = states[i + 1]
                     if abs(z - z2) < 0.5 and tilt * tilt2 < 0:  # same layer, opp. tilt
-                        loc0_V = loc0  if tilt  > 0 else loc02   # positive tilt → V plane
-                        loc0_U = loc02 if tilt  > 0 else loc0    # negative tilt → U plane
+                        loc0_U = loc0  if tilt  > 0 else loc02   # positive tilt → V plane
+                        loc0_V = loc02 if tilt  > 0 else loc0    # negative tilt → U plane
                         gx = (loc0_U + loc0_V) / 2.0 * mm2cm
                         gy = (loc0_V - loc0_U) / (2.0 * TAN5) * mm2cm
                         gz = (z + z2) / 2.0

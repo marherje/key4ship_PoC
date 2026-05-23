@@ -22,6 +22,9 @@
 #include "Acts/Utilities/AxisDefinitions.hpp"
 #include "Acts/Utilities/BinningData.hpp"
 #include "Acts/Utilities/Logger.hpp"
+#include "Acts/Material/Material.hpp"
+#include "Acts/Material/MaterialSlab.hpp"
+#include "Acts/Material/HomogeneousSurfaceMaterial.hpp"
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -66,6 +69,24 @@ ACTSGeoSvc::ACTSGeoSvc(const std::string& name, ISvcLocator* svcLoc)
 // ---------------------------------------------------------------------------
 // initialize()
 // ---------------------------------------------------------------------------
+
+namespace {
+// Query DD4hep for radiation length and nuclear interaction length of a
+// named material, then pack into an Acts::MaterialSlab of the given thickness.
+// DD4hep radLength()/intLength() return cm; ACTS wants mm.
+Acts::MaterialSlab makeSlab(const std::string& matName, double thicknessMm) {
+    auto& desc = dd4hep::Detector::getInstance();
+    dd4hep::Material mat = desc.material(matName);
+    float X0  = static_cast<float>(mat.radLength() * 10.0);   // cm → mm
+    float L0  = static_cast<float>(mat.intLength() * 10.0);   // cm → mm
+    float rho = static_cast<float>(mat.density());             // g/cm³
+    float A   = static_cast<float>(mat.A());
+    float Z   = static_cast<float>(mat.Z());
+    return Acts::MaterialSlab(
+        Acts::Material::fromMassDensity(X0, L0, A, Z, rho),
+        static_cast<float>(thicknessMm));
+}
+} // namespace
 
 StatusCode ACTSGeoSvc::initialize() {
   StatusCode sc = Service::initialize();
@@ -230,6 +251,39 @@ StatusCode ACTSGeoSvc::initialize() {
     }
   }
 
+  // ---- Insert combined MTC surfaces (plane=3) at z_mid of each (station, layer)
+  // These are flat (non-stereo) planes used for 2D paired-strip measurements.
+  // Without them, paired U+V hits would have to land on a stereo surface where
+  // the covariance is non-diagonal. The 1D unpaired hits still target the U/V
+  // surfaces.
+  {
+    std::map<std::pair<int,int>, std::pair<const PlaneInfo*, const PlaneInfo*>> mtcUV;
+    for (const auto& pi : allPlanes) {
+      if (pi.detID != 2) continue;
+      if (pi.plane != 0 && pi.plane != 1) continue;
+      auto& slot = mtcUV[{pi.station, pi.layerInDet}];
+      if (pi.plane == 0) slot.first  = &pi;
+      else               slot.second = &pi;
+    }
+    std::vector<PlaneInfo> combined;
+    combined.reserve(mtcUV.size());
+    for (const auto& [key, uv] : mtcUV) {
+      if (!uv.first || !uv.second) continue;
+      PlaneInfo pc = *uv.first;
+      pc.z         = 0.5 * (uv.first->z + uv.second->z);
+      pc.plane     = 3;                          // combined / paired
+      // Virtual measurement surface: zero physical extent so the layer array
+      // does not flag a bounds overlap with the closely-spaced U/V layers.
+      // Material lives on U (iron+scint) and V (scint); the combined surface
+      // contributes nothing to MS/energyLoss.
+      pc.thickness = 0.0;
+      combined.push_back(pc);
+    }
+    for (const auto& pc : combined) allPlanes.push_back(pc);
+    info() << "[ACTSGeoSvc] Added " << combined.size()
+           << " combined MTC surfaces (plane=3) at U/V midpoints." << endmsg;
+  }
+
   // Sort all planes by X (should already be sorted since SiTarget < SiPad in X)
   std::sort(allPlanes.begin(), allPlanes.end(),
             [](const PlaneInfo& a, const PlaneInfo& b) {
@@ -268,7 +322,9 @@ StatusCode ACTSGeoSvc::initialize() {
     // For MTC SciFi: R_X(∓α)·rot90Y tilts eBoundLoc0 to stereo direction
     // x∓y·tan(α), matching CartesianStripXStereo's strip_centre_at_y0.
     Acts::RotationMatrix3 surfaceRot = rot90Y;
-    if (pi.detID == 2) {
+    if (pi.detID == 2 && (pi.plane == 0 || pi.plane == 1)) {
+      // MTC SciFi U (plane=0) / V (plane=1): apply ±α stereo tilt.
+      // Combined MTC surfaces (plane=3) keep rot90Y only (flat).
       const double alpha_rad = m_mtcStereoAngle.value() * M_PI / 180.0;
       surfaceRot = Eigen::AngleAxisd(pi.plane == 0 ? +alpha_rad : -alpha_rad,
                        Acts::Vector3::UnitX()).toRotationMatrix() * rot90Y;
@@ -299,7 +355,63 @@ StatusCode ACTSGeoSvc::initialize() {
         nullptr,
         Acts::active);
 
+    // Attach surface material from DD4hep — never hard-code X0/rho.
+    // Layout confirmed from SND_compact.xml layer slice order.
+    {
+        std::shared_ptr<const Acts::ISurfaceMaterial> surfMat;
+        if (pi.detID == 0) {
+            // SiTarget: TungstenDens1910(3.5mm) upstream of plane=0 only
+            if (pi.plane == 0) {
+                surfMat = std::make_shared<Acts::HomogeneousSurfaceMaterial>(
+                    Acts::MaterialSlab::combineLayers(
+                        makeSlab("TungstenDens1910", 3.5),
+                        makeSlab("Silicon", 0.3)));
+            } else {
+                surfMat = std::make_shared<Acts::HomogeneousSurfaceMaterial>(
+                    makeSlab("Silicon", 0.3));
+            }
+        } else if (pi.detID == 1) {
+            // SiPad: TungstenDens1910(3.5mm) + Silicon(0.65mm); skip thin Cu/CF
+            surfMat = std::make_shared<Acts::HomogeneousSurfaceMaterial>(
+                Acts::MaterialSlab::combineLayers(
+                    makeSlab("TungstenDens1910", 3.5),
+                    makeSlab("Silicon", 0.65)));
+        } else if (pi.detID == 2) {
+            if (pi.plane == 0) {
+                // MTC U: 50mm outer + 3mm inner iron upstream, then scifi
+                surfMat = std::make_shared<Acts::HomogeneousSurfaceMaterial>(
+                    Acts::MaterialSlab::combineLayers(
+                        makeSlab("Iron", 53.0),
+                        makeSlab("Scintillator", 1.35)));
+            } else if (pi.plane == 1) {
+                // MTC V: only 1mm air between U and V — just attach scifi
+                surfMat = std::make_shared<Acts::HomogeneousSurfaceMaterial>(
+                    makeSlab("Scintillator", 1.35));
+            } else if (pi.plane == 2) {
+                // MTC Scint: 3mm inner iron upstream, then scintillator
+                surfMat = std::make_shared<Acts::HomogeneousSurfaceMaterial>(
+                    Acts::MaterialSlab::combineLayers(
+                        makeSlab("Iron", 3.0),
+                        makeSlab("Scintillator", 15.0)));
+            }
+        }
+        if (surfMat) {
+            detElem->surface().assignSurfaceMaterial(surfMat);
+        }
+    }
+
     allLayers.push_back(layer);
+  }
+
+  // Material sanity dump — eyeball one surface: Si X0~93.7mm, Fe X0~17.6mm, W X0~3.5mm
+  for (const auto& de : m_detectorElements) {
+    const auto* mat = de->surface().surfaceMaterial();
+    if (!mat) continue;
+    auto slab = mat->materialSlab(Acts::Vector2{0, 0});
+    info() << "[ACTSGeoSvc] MatDump: X0=" << slab.material().X0()
+           << " mm  L0=" << slab.material().L0()
+           << " mm  t=" << slab.thickness() << " mm" << endmsg;
+    break;
   }
 
   // ---- Step 3: Create navigation layers at boundaries --------------------

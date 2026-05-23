@@ -1,10 +1,13 @@
 # ACTS material-budget migration plan
 
-**Status:** plan, not implementation. Drafted 2026-05-17 in response to the
-over-curvature investigation
+**Status:** Path B implemented 2026-05-17. Path A remains a future follow-up.
+Drafted and implemented in response to the over-curvature investigation
 ([`gaudi_jobs/muon_pipeline/MTC_OVERCURVATURE_FINDINGS.md`](../gaudi_jobs/muon_pipeline/MTC_OVERCURVATURE_FINDINGS.md))
 and the latent-risk note in
 [`docs/known_issues.md`](known_issues.md).
+
+**Path B result:** median |R_truth/R_reco| = 0.94 (was 3–10×); median reco |dx|
+through MTC = 1–6 mm (was 1600–3400 mm). See `known_issues.md` for full table.
 
 ## TL;DR
 
@@ -436,15 +439,16 @@ work.
 
 ## Open questions
 
-- **DD4hep `Material` API.** Does `radLength()` return cm in 2026-02-01? Or
-  has it switched to mm? Verify before encoding the `* 10.0` factor.
-- **MTC iron between U/V planes.** Are there iron walls between the
-  U and V plane (2.35 mm separation), or is the iron all on the upstream side
-  of the U/V pair? Inspect `MTCDetector.cpp` `CreateSciFiModule` carefully.
-- **SiPad tungsten thickness.** The number 3.5 mm in this doc is a placeholder
-  — confirm in `SiPadDetector.xml`.
-- **`MaterialSlab::averageLayers` availability.** Does 44.3 expose it under
-  this name, or is it `combine` / `fromLayers` / something else? If unclear,
-  attach two separate slabs on two surfaces (more code, less ambiguous).
-- **CuboidVolumeBuilder offset bug.** Still present in Acts 44.3? Test with a
-  small reproducer before committing to Path A.
+- **DD4hep `Material` API units.** ✅ Confirmed: `radLength()` and `intLength()`
+  return cm in the 2026-02-01 stack. The `* 10.0` factor in `makeSlab` is correct.
+- **MTC iron between U/V planes.** ✅ Confirmed: no iron between U and V.
+  `MTCDetector.xml` layer order: Iron(50mm) → Iron(3mm) → Si-U → Air(1mm) → Si-V → Iron(3mm) → Scint.
+  Iron(53mm total) attaches to U plane only; V plane gets scintillator only.
+- **SiPad tungsten thickness.** ✅ Confirmed 3.5mm from `SND_compact.xml:43`
+  (`Ecal_WThickness = 3.5*mm`). Material name: `TungstenDens1910`.
+- **`MaterialSlab::averageLayers` availability.** ✅ Does not exist in 44.3.
+  Use `Acts::MaterialSlab::combineLayers(slabA, slabB)` — confirmed in header.
+- **MTC SciFi material name.** ✅ The compact XML uses `material="Silicon"` for the
+  SciFi planes (geometry placeholder), but `"Scintillator"` is used in the
+  material attachment to reflect the physically correct fibre material.
+- **CuboidVolumeBuilder offset bug.** Still open — relevant only for Path A.

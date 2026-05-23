@@ -152,6 +152,9 @@ public:
                 cd.energy    = contrib.getEnergy();
                 cd.time      = static_cast<float>(static_cast<double>(ev) * delay)
                                + contrib.getTime();
+                // ddsim leaves CaloHitContribution.PDG = 0; pull it from the linked MCParticle instead.
+                const auto mcp = contrib.getParticle();
+                cd.pdg       = mcp.isAvailable() ? mcp.getPDG() : 0;
                 cd.source_id = sourceID;
                 cd.stepX     = sp.x;
                 cd.stepY     = sp.y;
@@ -181,6 +184,9 @@ public:
               cd.energy    = contrib.getEnergy();
               cd.time      = static_cast<float>(static_cast<double>(ev) * delay)
                              + contrib.getTime();
+              // ddsim leaves CaloHitContribution.PDG = 0; pull it from the linked MCParticle instead.
+              const auto mcp = contrib.getParticle();
+              cd.pdg       = mcp.isAvailable() ? mcp.getPDG() : 0;
               cd.source_id = sourceID;
               cd.stepX     = sp.x;
               cd.stepY     = sp.y;
@@ -206,10 +212,12 @@ public:
           [](const std::map<uint64_t, std::vector<ContribData>>& buf)
           -> std::tuple<edm4hep::SimCalorimeterHitCollection,
                         edm4hep::CaloHitContributionCollection,
+                        std::vector<int>,
                         std::vector<int>> {
         edm4hep::SimCalorimeterHitCollection   hits;
         edm4hep::CaloHitContributionCollection contribs;
         std::vector<int> sourceIDs;
+        std::vector<int> pdgs;  // per-contribution real Geant4 PDG codes
         for (const auto& [cellID, vec] : buf) {
           auto outHit = hits.create();
           outHit.setCellID(cellID);
@@ -233,17 +241,18 @@ public:
             contrib.setPDG(cd.source_id);
             contrib.setStepPosition({cd.stepX, cd.stepY, cd.stepZ});
             outHit.addToContributions(contrib);
+            pdgs.push_back(cd.pdg);  // parallel PDG vector (per contribution)
             totalE += cd.energy;
           }
           outHit.setEnergy(totalE);
         }
-        return {std::move(hits), std::move(contribs), std::move(sourceIDs)};
+        return {std::move(hits), std::move(contribs), std::move(sourceIDs), std::move(pdgs)};
       };
 
-      auto [outSiTarget,  outSiTargetContribs,  sourceIDsSiTarget]  = buildColl(m_bufferSiTarget);
-      auto [outSiPad,    outSiPadContribs,    sourceIDsSiPad]    = buildColl(m_bufferSiPad);
-      auto [outMTCSciFi, outMTCSciFiContribs, sourceIDsMTCSciFi] = buildColl(m_bufferMTCSciFi);
-      auto [outMTCScint, outMTCScintContribs, sourceIDsMTCScint] = buildColl(m_bufferMTCScint);
+      auto [outSiTarget,  outSiTargetContribs,  sourceIDsSiTarget,  pdgsSiTarget]  = buildColl(m_bufferSiTarget);
+      auto [outSiPad,    outSiPadContribs,    sourceIDsSiPad,    pdgsSiPad]    = buildColl(m_bufferSiPad);
+      auto [outMTCSciFi, outMTCSciFiContribs, sourceIDsMTCSciFi, pdgsMTCSciFi] = buildColl(m_bufferMTCSciFi);
+      auto [outMTCScint, outMTCScintContribs, sourceIDsMTCScint, pdgsMTCScint] = buildColl(m_bufferMTCScint);
 
       podio::ROOTWriter writer(m_outputFile.value());
       {
@@ -260,6 +269,11 @@ public:
         outFrame.putParameter("SiPadSourceIDs",     sourceIDsSiPad);
         outFrame.putParameter("MTCSciFiSourceIDs",  sourceIDsMTCSciFi);
         outFrame.putParameter("MTCScintSourceIDs",  sourceIDsMTCScint);
+        // Per-contribution real Geant4 PDG codes (parallel to *_Contributions collections)
+        outFrame.putParameter("SiTargetContribPDGs", pdgsSiTarget);
+        outFrame.putParameter("SiPadContribPDGs",    pdgsSiPad);
+        outFrame.putParameter("MTCSciFiContribPDGs", pdgsMTCSciFi);
+        outFrame.putParameter("MTCScintContribPDGs", pdgsMTCScint);
         writer.writeFrame(outFrame, "events");
       }
       writer.finish();
@@ -285,6 +299,7 @@ private:
     float energy;
     float time;        // absolute time in ns
     int   source_id;
+    int   pdg;         // real Geant4 PDG code from the input ddsim file
     float stepX, stepY, stepZ;
     float hitX, hitY, hitZ;
   };

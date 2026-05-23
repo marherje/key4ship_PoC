@@ -1,11 +1,41 @@
 # MTC Over-Curvature Investigation
 
+**Status: RESOLVED 2026-05-17** — Path B material implementation in `gaudi_source/ACTSGeoSvc.cpp`.
+See resolution summary below and `docs/known_issues.md` "No surface material" entry.
+
 **Pipeline:** `gaudi_jobs/muon_pipeline/` with input
 `output/output_mu-_xyz_5.0_-82.5_-1000.0_dir_0_0_1_E5_100_events.edm4hep.root`
 (50 mu- events, 5 GeV, gun at (5, -82.5, -1000) mm, direction (0,0,1)).
 
 **Diagnostic script:** [`diagnose_mtc_curvature.py`](diagnose_mtc_curvature.py)
 Plots in [`plots_curvature/`](plots_curvature/).
+
+---
+
+## Resolution (2026-05-17)
+
+**Root cause confirmed:** `ACTSGeoSvc` attached no `ISurfaceMaterial` to any surface.
+The CKF MS noise term reads `surface->surfaceMaterial()` and contributes zero when null.
+With MS disabled (effectively), each 53 mm of MTC iron was treated as vacuum and all MS
+kicks were absorbed into the fitted q/p, over-tightening the reconstructed radius by 3–10×.
+
+**Fix:** Path B from `docs/acts_material_migration.md` — `makeSlab` helper added to
+`ACTSGeoSvc.cpp` (anonymous namespace) queries `dd4hep::Detector::material(name)` for
+X₀, L₀, ρ and attaches `HomogeneousSurfaceMaterial` to each surface after construction.
+Iron(53mm) + Scintillator(1.35mm) on MTC U planes; plain Scintillator on V planes;
+TungstenDens1910(3.5mm) + Silicon on SiTarget/SiPad planes.
+
+**Post-fix results (same 50-event input):**
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Median \|R_truth / R_reco\| | 3–10× | **0.94** |
+| Median reco \|dx\| through MTC | 1600–3400 mm | **1–6 mm** |
+| Median \|dx\|_max through MTC | ~1700–3400 mm | **10–20 mm** |
+| Sign agreement | 21/24 = 87.5% | 22/26 = 85% |
+
+The 4 sign-flip outliers in the post-fix run are seeding ghosts (tracks sharing
+hits with the primary muon); they are not material-related and were present before.
 
 ---
 
