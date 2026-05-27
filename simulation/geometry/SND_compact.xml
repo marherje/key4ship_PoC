@@ -100,7 +100,7 @@
     <!-- Z centres: gap of 600 mm after SiPad downstream face, stations back-to-back.
          MTC_inter_station_gap avoids the 0.2 mm envelope overlap (2 × 0.1 mm plugin safety). -->
     <constant name="MTC_inter_station_gap" value="1.0*mm"/>
-    <constant name="MTC40_z_position"    value="Ecal_dim_z/2.0 + 600.0*mm + MTC_total_length/2.0"/>
+    <constant name="MTC40_z_position"    value="Ecal_dim_z/2.0 + 100.0*mm + MTC_total_length/2.0"/>
     <constant name="MTC50_z_position"    value="MTC40_z_position + MTC_total_length + MTC_inter_station_gap"/>
     <constant name="MTC60_z_position"    value="MTC50_z_position + MTC_total_length + MTC_inter_station_gap"/>
 

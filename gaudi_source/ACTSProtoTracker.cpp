@@ -22,13 +22,17 @@
 
 // ACTS propagator
 #include "Acts/Propagator/EigenStepper.hpp"
-#include "Acts/Propagator/DirectNavigator.hpp"
 #include "Acts/Propagator/Propagator.hpp"
 #include "Acts/Propagator/PropagatorOptions.hpp"
 
-// ACTS track fitting
+// ACTS track fitting + finding
 #include "Acts/TrackFitting/GainMatrixUpdater.hpp"
-#include "Acts/TrackFitting/KalmanFitter.hpp"
+#include "Acts/Propagator/DirectNavigator.hpp"
+#include "Acts/Propagator/Navigator.hpp"
+#include "Acts/TrackFinding/CombinatorialKalmanFilter.hpp"
+#include "Acts/TrackFinding/MeasurementSelector.hpp"
+#include "Acts/TrackFinding/TrackStateCreator.hpp"
+#include "Acts/EventData/Types.hpp"
 
 // ACTS track containers
 #include "Acts/EventData/TrackContainer.hpp"
@@ -56,10 +60,12 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -103,20 +109,130 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// SNDSourceLinkAccessor
+// Returns the range [begin, end) of SourceLinks associated with a surface.
+// The slinks vector must be sorted by geometryId() before use.
+// ---------------------------------------------------------------------------
+
+struct SNDSourceLinkAccessor {
+  const std::vector<Acts::SourceLink>* slinks = nullptr;
+  std::pair<std::vector<Acts::SourceLink>::const_iterator,
+            std::vector<Acts::SourceLink>::const_iterator>
+  operator()(const Acts::Surface& surface) const {
+    const auto geoId = surface.geometryId();
+    // std::equal_range needs the comparator in both directions, so use
+    // lower_bound + upper_bound with direction-specific lambdas instead.
+    auto lo = std::lower_bound(
+        slinks->begin(), slinks->end(), geoId,
+        [](const Acts::SourceLink& sl, const Acts::GeometryIdentifier& id) {
+          return sl.get<SNDSourceLink>().geometryId() < id;
+        });
+    auto hi = std::upper_bound(
+        lo, slinks->end(), geoId,
+        [](const Acts::GeometryIdentifier& id, const Acts::SourceLink& sl) {
+          return id < sl.get<SNDSourceLink>().geometryId();
+        });
+    return {lo, hi};
+  }
+};
+
+// ---------------------------------------------------------------------------
+// SNDFixedNavigator — wraps DirectNavigator; injects the surface list from
+// Config at makeState() time so the CKF's setPlainOptions() (which only
+// copies NavigatorPlainOptions base fields) cannot accidentally erase it.
+// ---------------------------------------------------------------------------
+
+struct SNDFixedNavigator {
+  // Surface sequence set once at construction; never touched by CKF options.
+  std::vector<const Acts::Surface*> surfaces;
+
+  // Options: minimal wrapper around NavigatorPlainOptions.
+  // The CKF calls setPlainOptions() on this — it only copies base fields,
+  // which is exactly what we want (surfaces stay in Config, not Options).
+  struct Options : public Acts::NavigatorPlainOptions {
+    explicit Options(const Acts::GeometryContext& gctx)
+        : Acts::NavigatorPlainOptions(gctx) {}
+    void setPlainOptions(const Acts::NavigatorPlainOptions& opts) {
+      static_cast<Acts::NavigatorPlainOptions&>(*this) = opts;
+    }
+  };
+
+  using State = Acts::DirectNavigator::State;
+
+  // makeState: inject our surface list before creating the DirectNavigator state.
+  State makeState(const Options& opts) const {
+    // Diagnostic: confirm this navigator is actually being used.
+    static std::atomic<int> s_callCount{0};
+    if (s_callCount.fetch_add(1) < 3) {
+      std::fprintf(stderr,
+          "[SNDFixedNavigator] makeState called: %zu surfaces in Config\n",
+          surfaces.size());
+    }
+    Acts::DirectNavigator::Options dirOpts(opts.geoContext);
+    static_cast<Acts::NavigatorPlainOptions&>(dirOpts) =
+        static_cast<const Acts::NavigatorPlainOptions&>(opts);
+    dirOpts.surfaces = surfaces;
+    Acts::DirectNavigator inner;
+    return inner.makeState(dirOpts);
+  }
+
+  // Delegate all navigator interface methods to DirectNavigator.
+  Acts::Result<void> initialize(State& state, const Acts::Vector3& pos,
+                                const Acts::Vector3& dir,
+                                Acts::Direction propDir) const {
+    Acts::DirectNavigator inner;
+    return inner.initialize(state, pos, dir, propDir);
+  }
+  Acts::NavigationTarget nextTarget(State& state, const Acts::Vector3& pos,
+                                    const Acts::Vector3& dir) const {
+    Acts::DirectNavigator inner;
+    return inner.nextTarget(state, pos, dir);
+  }
+  bool checkTargetValid(const State& state, const Acts::Vector3& pos,
+                        const Acts::Vector3& dir) const {
+    Acts::DirectNavigator inner;
+    return inner.checkTargetValid(state, pos, dir);
+  }
+  void handleSurfaceReached(State& state, const Acts::Vector3& pos,
+                            const Acts::Vector3& dir,
+                            const Acts::Surface& sf) const {
+    Acts::DirectNavigator inner;
+    inner.handleSurfaceReached(state, pos, dir, sf);
+  }
+  const Acts::Surface* currentSurface(const State& s) const {
+    return s.currentSurface;
+  }
+  const Acts::TrackingVolume* currentVolume(const State&) const {
+    return nullptr;
+  }
+  const Acts::IVolumeMaterial* currentVolumeMaterial(const State&) const {
+    return nullptr;
+  }
+  const Acts::Surface* startSurface(const State& s) const {
+    return s.options.startSurface;
+  }
+  const Acts::Surface* targetSurface(const State& s) const {
+    return s.options.targetSurface;
+  }
+  bool endOfWorldReached(State&) const { return false; }
+  bool navigationBreak(const State& s) const { return s.navigationBreak; }
+};
+
+// ---------------------------------------------------------------------------
 // Type aliases
 // ---------------------------------------------------------------------------
 
-using SNDStepper         = Acts::EigenStepper<>;
-using SNDDirectNavigator = Acts::DirectNavigator;
-using SNDPropagator      = Acts::Propagator<SNDStepper, SNDDirectNavigator>;
+using SNDStepper       = Acts::EigenStepper<>;
+using SNDCKFNavigator  = SNDFixedNavigator;
+using SNDCKFPropagator = Acts::Propagator<SNDStepper, SNDCKFNavigator>;
 
 using SNDTrackContainer = Acts::TrackContainer<
     Acts::VectorTrackContainer,
     Acts::VectorMultiTrajectory,
     std::shared_ptr>;
 
-using SNDKalmanFitter = Acts::KalmanFitter<SNDPropagator,
-                                           Acts::VectorMultiTrajectory>;
+using SNDCKF = Acts::CombinatorialKalmanFilter<SNDCKFPropagator,
+                                               SNDTrackContainer>;
 
 // ---------------------------------------------------------------------------
 // IronSlabBField — By inside registered slabs, zero everywhere else.
@@ -254,10 +370,31 @@ private:
       this, "SeedStripPitch", 0.0755,
       "Strip pitch [mm] used for most-frequent-strip seed refinement."};
 
-  Gaudi::Property<double> m_maxChi2PerMeas{
-    this, "MaxChi2PerMeas", 500.0,
-    "Maximum chi2/nMeas threshold for track acceptance. "
-    "Tracks above this threshold are rejected as false seeds."};
+  Gaudi::Property<double> m_maxChi2PerNdf{
+    this, "MaxChi2PerNdf", 500.0,
+    "Maximum chi2/ndf threshold for track acceptance, where "
+    "ndf = Σ calibratedSize − 5 helix params. Tracks above this "
+    "threshold are rejected as false seeds (≈1 = ideal, >>1 = bad fit)."};
+
+  Gaudi::Property<double> m_chi2CutOff{
+      this, "Chi2CutOff", 15.0,
+      "chi2 cut for MeasurementSelector: maximum local chi2 to accept a "
+      "measurement on a surface during CKF track finding."};
+
+  Gaudi::Property<int> m_numMeasCutOff{
+      this, "NumMeasCutOff", 1,
+      "Maximum number of measurements accepted per surface by "
+      "MeasurementSelector during CKF track finding."};
+
+  Gaudi::Property<int> m_maxPropSteps{
+      this, "MaxPropSteps", 100000,
+      "Maximum number of propagation steps allowed by the CKF EigenStepper. "
+      "Increase if PropagatorError:2 occurs (step-count limit hit)."};
+
+  Gaudi::Property<double> m_maxStepSize{
+      this, "MaxStepSize", 100.0,
+      "Maximum single-step size [mm] for the CKF EigenStepper. "
+      "100 mm gives ~0.06 mm position error per step at 1.7 T / 10 GeV."};
 
   // Track/shower classification: maximum crossing multiplicity per station.
   // For each Hough peak, multiplicity = nCompatCrossings / nCompatStations.
@@ -466,6 +603,7 @@ std::vector<ACTSProtoTracker::SeedCandidate> ACTSProtoTracker::findSeeds(
 
   // --- Source C: MTC SciFi U×V stereo crossings ---
   // Group by surface Z rounded to 10mm to pair U and V slices of the same layer.
+  // IDEA: drop out unrealistic pairs (e.g. too far away from each other)
   {
     const double tan_stereo = std::tan(m_mtcStereoAngle.value() * M_PI / 180.0);
     const int maxCrossingsPerLayer = 200;
@@ -825,46 +963,46 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
     }
 
     // ---- SiPad (2D pixels) --------------------------------------------------
+    // Surface lookup is address-based via ISNDGeoSvc::surfaceByAddress (detID=1,
+    // station=-1, layer=quality, plane=-1). The layer index is written by
+    // SiPadMeasConverter into TrackerHit3D::quality. This replaces the previous
+    // nearest-z search, which depended on a fragile largest-gap heuristic for the
+    // SiTarget/SiPad/MTC split (broken when MTC inter-station gaps exceed the
+    // inter-detector gaps).
     const auto* spHits = m_siPadHandle->get();
     if (spHits) {
       for (std::size_t i = 0; i < spHits->size(); ++i) {
-        const auto& hit = (*spHits)[i];
-        const auto& pos = hit.getPosition();
+        const auto& hit   = (*spHits)[i];
+        const auto& pos   = hit.getPosition();
+        const int   layer = hit.getQuality();
 
-        const Acts::Surface* bestSurface = nullptr;
-        double bestDist = 1e9;
-        for (std::size_t j = m_nSiTargetSurfaces;
-             j < m_nSiTargetSurfaces + m_nSiPadSurfaces; ++j) {
-          double dz = std::abs(allSurfaces[j]->center(gctx).x() - pos.z);
-          if (dz < bestDist) {
-            bestDist    = dz;
-            bestSurface = allSurfaces[j];
-          }
-        }
-
-        if (!bestSurface) {
+        const Acts::Surface* surf =
+            m_geoSvc->surfaceByAddress(1, -1, layer, -1);
+        if (!surf) {
           warning() << "[ACTSProtoTracker] evt=" << evtNum
-                    << " SiPad hit " << i << " has no matching surface."
-                    << endmsg;
+                    << " SiPad hit " << i << " layer=" << layer
+                    << " has no matching surface." << endmsg;
           continue;
         }
 
         const auto& cov = hit.getCovMatrix();
-        // Z=beam: SiPad measures X and Y (transverse coordinates)
-        measurements.emplace_back(bestSurface, pos.x, pos.y,
+        measurements.emplace_back(surf, pos.x, pos.y,
                                    cov[0], cov[3], true, 1, -1,
                                    hit.getTime(), hit.getEDep());
       }
     }
 
-    // ---- MTC SciFi (1D stereo strips) -----------------------------------------
+    // ---- MTC SciFi (1D stereo strips OR 2D U+V paired) ------------------------
+    // Quality field carries the kind:
+    //   0,1 → 1D on U/V stereo surface (loc0 only)
+    //   3   → 2D on combined flat surface (loc0,loc1) = (X_g,Y_g)
     const auto* mtcHits = m_mtcHandle->get();
     if (mtcHits) {
       for (std::size_t i = 0; i < mtcHits->size(); ++i) {
         const auto& hit   = (*mtcHits)[i];
         const auto& pos   = hit.getPosition();
         const auto& cov   = hit.getCovMatrix();
-        const int   plane = hit.getQuality();  // 0=U, 1=V
+        const int   plane = hit.getQuality();  // 0=U, 1=V, 3=combined
 
         uint64_t cellID = hit.getCellID();
         int station = static_cast<int>((*m_mtcBitField)["station"].value(cellID));
@@ -879,9 +1017,11 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
           continue;
         }
 
+        const bool is2D = (plane == 3);
         measurements.emplace_back(surf,
-                                   pos.x, 0.0, cov[0], 0.0,
-                                   false, 2, plane,
+                                   pos.x, is2D ? pos.y : 0.0,
+                                   cov[0], is2D ? cov[3] : 0.0,
+                                   is2D, 2, plane,
                                    hit.getTime(), hit.getEDep());
       }
     }
@@ -935,14 +1075,6 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
                         m_bFieldZ.value() * Acts::UnitConstants::T));
     }
 
-    // ---- SurfaceAccessor: maps SourceLink → Surface -------------------------
-    struct SNDSurfaceAccessor {
-      const std::vector<SNDMeasurement>* meas = nullptr;
-      const Acts::Surface* operator()(const Acts::SourceLink& sl) const {
-        return (*meas)[sl.get<SNDSourceLink>().index].surface;
-      }
-    };
-
     // ---- Calibrator ---------------------------------------------------------
     struct SNDCalibrator {
       const std::vector<SNDMeasurement>* meas = nullptr;
@@ -952,16 +1084,10 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
                       Acts::VectorMultiTrajectory::TrackStateProxy ts) const {
         const auto& ssl = sl.get<SNDSourceLink>();
         const auto& m   = (*meas)[ssl.index];
-        if (m.detectorID == 2) {
-          // MTC SciFi: 1D on pre-stereo-rotated surface → always eBoundLoc0.
-          ts.allocateCalibrated(1);
-          ts.template calibrated<1>() = Acts::ActsVector<1>(m.localCoord);
-          ts.template calibratedCovariance<1>() =
-              Acts::ActsSquareMatrix<1>{{m.variance}};
-          constexpr std::array<Acts::BoundIndices, 1> mtcIdx = {Acts::eBoundLoc0};
-          ts.setProjectorSubspaceIndices(mtcIdx);
-          return;
-        } else if (m.is2D) {
+        if (m.is2D) {
+          // 2D measurement on a flat (non-stereo) surface:
+          //   • SiPad: (loc0,loc1) = (DD4hep X, DD4hep Y)
+          //   • MTC combined (plane=3): (loc0,loc1) = (X_g, Y_g) from U+V pairing
           constexpr std::array<Acts::BoundIndices, 2> indices = {
               Acts::eBoundLoc0, Acts::eBoundLoc1};
           ts.allocateCalibrated(2);
@@ -971,55 +1097,123 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
               Acts::ActsSquareMatrix<2>{{m.variance, 0.0},
                                         {0.0, m.variance2}};
           ts.setProjectorSubspaceIndices(indices);
-        } else {
-          // 1D SiTarget strip measurement.
-          // plane=0 (StripX): DD4hep X → global Z → eBoundLoc0
-          // plane=1 (StripY): DD4hep Y → global Y → eBoundLoc1
+          return;
+        }
+        if (m.detectorID == 2) {
+          // MTC SciFi unpaired: 1D on stereo-rotated U/V surface → eBoundLoc0.
           ts.allocateCalibrated(1);
-          ts.template calibrated<1>() =
-              Acts::ActsVector<1>(m.localCoord);
+          ts.template calibrated<1>() = Acts::ActsVector<1>(m.localCoord);
           ts.template calibratedCovariance<1>() =
               Acts::ActsSquareMatrix<1>{{m.variance}};
-          if (m.plane == 1) {
-            constexpr std::array<Acts::BoundIndices, 1> indices = {
-                Acts::eBoundLoc1};
-            ts.setProjectorSubspaceIndices(indices);
-          } else {
-            constexpr std::array<Acts::BoundIndices, 1> indices = {
-                Acts::eBoundLoc0};
-            ts.setProjectorSubspaceIndices(indices);
-          }
+          constexpr std::array<Acts::BoundIndices, 1> mtcIdx = {Acts::eBoundLoc0};
+          ts.setProjectorSubspaceIndices(mtcIdx);
+          return;
+        }
+        // 1D SiTarget strip measurement.
+        // plane=0 (StripX): DD4hep X → global Z → eBoundLoc0
+        // plane=1 (StripY): DD4hep Y → global Y → eBoundLoc1
+        ts.allocateCalibrated(1);
+        ts.template calibrated<1>() = Acts::ActsVector<1>(m.localCoord);
+        ts.template calibratedCovariance<1>() =
+            Acts::ActsSquareMatrix<1>{{m.variance}};
+        if (m.plane == 1) {
+          constexpr std::array<Acts::BoundIndices, 1> indices = {
+              Acts::eBoundLoc1};
+          ts.setProjectorSubspaceIndices(indices);
+        } else {
+          constexpr std::array<Acts::BoundIndices, 1> indices = {
+              Acts::eBoundLoc0};
+          ts.setProjectorSubspaceIndices(indices);
         }
       }
     };
 
-    using KFExtensions = Acts::KalmanFitterExtensions<Acts::VectorMultiTrajectory>;
-    Acts::GainMatrixUpdater gainMatrixUpdater;
-    SNDSurfaceAccessor surfaceAccessor;
-    surfaceAccessor.meas = &measurements;
     SNDCalibrator calibrator;
     calibrator.meas = &measurements;
 
-    KFExtensions extensions;
-    extensions.updater
+    // ---- Build sorted SourceLink list (CKF accessor needs sorted-by-geoId) --
+    // One SourceLink per measurement; includes ALL measurements (not pre-filtered
+    // per seed — the CKF's MeasurementSelector handles per-surface selection).
+    std::vector<Acts::SourceLink> sortedSLinks;
+    sortedSLinks.reserve(measurements.size());
+    for (std::size_t i = 0; i < measurements.size(); ++i) {
+      SNDSourceLink ssl;
+      ssl.index = i;
+      ssl.setGeometryId(measurements[i].surface->geometryId());
+      sortedSLinks.push_back(Acts::SourceLink(ssl));
+    }
+    std::sort(sortedSLinks.begin(), sortedSLinks.end(),
+              [](const Acts::SourceLink& a, const Acts::SourceLink& b) {
+                return a.get<SNDSourceLink>().geometryId() <
+                       b.get<SNDSourceLink>().geometryId();
+              });
+
+    // ---- CKF infrastructure (built once per event, reused across seeds) -----
+    Acts::GainMatrixUpdater gainMatrixUpdater;
+    SNDSourceLinkAccessor slAccessor;
+    slAccessor.slinks = &sortedSLinks;
+
+    Acts::MeasurementSelectorCuts measCuts;
+    measCuts.chi2CutOff            = {m_chi2CutOff.value()};
+    measCuts.numMeasurementsCutOff = {static_cast<std::size_t>(m_numMeasCutOff.value())};
+    Acts::MeasurementSelector measSelector(measCuts);
+
+    using SLinkIter = std::vector<Acts::SourceLink>::const_iterator;
+    Acts::TrackStateCreator<SLinkIter, SNDTrackContainer> tsc;
+    tsc.sourceLinkAccessor
+        .connect<&SNDSourceLinkAccessor::operator()>(&slAccessor);
+    tsc.calibrator
+        .template connect<&SNDCalibrator::operator()>(&calibrator);
+    tsc.measurementSelector
+        .connect<&Acts::MeasurementSelector::select<Acts::VectorMultiTrajectory>>(
+            &measSelector);
+
+    Acts::CombinatorialKalmanFilterExtensions<SNDTrackContainer> ckfExtensions;
+    ckfExtensions.updater
         .connect<&Acts::GainMatrixUpdater::operator()<Acts::VectorMultiTrajectory>>(
             &gainMatrixUpdater);
-    extensions.calibrator
-        .template connect<&SNDCalibrator::operator()>(&calibrator);
-    extensions.surfaceAccessor
-        .template connect<&SNDSurfaceAccessor::operator()>(&surfaceAccessor);
+    ckfExtensions.createTrackStates
+        .connect<&Acts::TrackStateCreator<SLinkIter, SNDTrackContainer>::createTrackStates>(
+            &tsc);
+
+    // SNDFixedNavigator: surfaces injected from allSurfaces at makeState()
+    // time. The CKF's setPlainOptions() only copies NavigatorPlainOptions base
+    // fields and cannot erase the surface list stored in the Config.
+    SNDFixedNavigator ckfNavigator;
+    ckfNavigator.surfaces.assign(allSurfaces.begin(), allSurfaces.end());
+
+    if (evtNum < 1) {
+      debug() << "[ACTSProtoTracker] DIAG: ckfNavigator has "
+              << ckfNavigator.surfaces.size() << " surfaces" << endmsg;
+      if (!ckfNavigator.surfaces.empty()) {
+        debug() << "[ACTSProtoTracker] DIAG: first surf geoId="
+                << ckfNavigator.surfaces.front()->geometryId() << endmsg;
+        debug() << "[ACTSProtoTracker] DIAG: last surf geoId="
+                << ckfNavigator.surfaces.back()->geometryId() << endmsg;
+      }
+    }
+
+    SNDStepper       ckfStepper(bField);
+    SNDCKFPropagator ckfPropagator(std::move(ckfStepper), std::move(ckfNavigator));
+    SNDCKF ckf(std::move(ckfPropagator),
+               Acts::getDefaultLogger("CKF", Acts::Logging::WARNING));
+
+    // Track container accumulates tracks from all seeds this event.
+    auto trackBackend = std::make_shared<Acts::VectorTrackContainer>();
+    auto trajBackend  = std::make_shared<Acts::VectorMultiTrajectory>();
+    SNDTrackContainer ckfTracks(trackBackend, trajBackend);
 
     // Shared seed covariance (loose — same for all seeds)
     Acts::BoundSquareMatrix seedCov = Acts::BoundSquareMatrix::Zero();
-    seedCov(Acts::eBoundLoc0,   Acts::eBoundLoc0)   = 1e6;
-    seedCov(Acts::eBoundLoc1,   Acts::eBoundLoc1)   = 1e6;
+    seedCov(Acts::eBoundLoc0,   Acts::eBoundLoc0)   = 1e2;
+    seedCov(Acts::eBoundLoc1,   Acts::eBoundLoc1)   = 1e2;
     seedCov(Acts::eBoundPhi,    Acts::eBoundPhi)     = 1.0;
     seedCov(Acts::eBoundTheta,  Acts::eBoundTheta)   = 1.0;
-    seedCov(Acts::eBoundQOverP, Acts::eBoundQOverP)  = 10.0;
+    seedCov(Acts::eBoundQOverP, Acts::eBoundQOverP)  = 0.04;
     seedCov(Acts::eBoundTime,   Acts::eBoundTime)    = 1e9;
 
     const double seedQoverP =
-        1.0 / (m_seedMomentum.value() * Acts::UnitConstants::GeV);
+        -1.0 / (m_seedMomentum.value() * Acts::UnitConstants::GeV);
 
     // ---- Build seed list (auto or manual) -----------------------------------
     // Each entry is (dd_x, dd_y, dd_z) in DD4hep convention.
@@ -1089,12 +1283,6 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
     // =========================================================================
     for (std::size_t iSeed = 0; iSeed < nSeeds; ++iSeed) {
 
-      // ---- Build fresh propagator for this seed ----------------------------
-      // (propagator is moved into KalmanFitter, so rebuild each iteration)
-      SNDStepper        stepper_i(bField);
-      SNDDirectNavigator navigator_i;
-      SNDPropagator propagator_i(std::move(stepper_i),
-                                  std::move(navigator_i));
 
       // ---- Seed position (DD4hep → ACTS coordinate swap) -------------------
       // DD4hep convention: x=transverse X, y=transverse Y, z=beam.
@@ -1132,75 +1320,8 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
       if (seedDir.norm() < 1e-6) seedDir = Acts::Vector3(1.0, 0.001, 0.001);
       seedDir = seedDir.normalized();
 
-      // ---- Seed-dependent hit selection ------------------------------------
-      // Select the best hit per surface relative to THIS seed's transverse
-      // position (dd_x, dd_y in DD4hep convention).
-      // For 1D measurements: minimize |localCoord - seed_ref|
-      //   plane=0 (StripX): seed_ref = dd_x
-      //   plane=1 (StripY): seed_ref = dd_y
-      // For 2D measurements (SiPad): minimize 2D distance to (dd_x, dd_y)
-      const double seed_ref_x = dd_x;  // transverse X reference [mm]
-      const double seed_ref_y = dd_y;  // transverse Y reference [mm]
-
-      std::unordered_map<Acts::GeometryIdentifier, std::size_t> bestHitPerSurface;
-      for (std::size_t i = 0; i < measurements.size(); ++i) {
-        const auto& m   = measurements[i];
-        auto        gid = m.surface->geometryId();
-
-        double dist = 0.0;
-        if (m.detectorID == 2) {
-          dist = std::abs(m.localCoord - seed_ref_x);
-        } else if (m.is2D) {
-          double dx = m.localCoord  - seed_ref_x;
-          double dy = m.localCoord2 - seed_ref_y;
-          dist = std::sqrt(dx * dx + dy * dy);
-        } else {
-          if (m.plane == 0)
-            dist = std::abs(m.localCoord - seed_ref_x);
-          else
-            dist = std::abs(m.localCoord - seed_ref_y);
-        }
-
-        auto it = bestHitPerSurface.find(gid);
-        if (it == bestHitPerSurface.end()) {
-          bestHitPerSurface[gid] = i;
-        } else {
-          const auto& mExist = measurements[it->second];
-          double existDist = 0.0;
-          if (mExist.detectorID == 2) {
-            existDist = std::abs(mExist.localCoord - seed_ref_x);
-          } else if (mExist.is2D) {
-            double dx = mExist.localCoord  - seed_ref_x;
-            double dy = mExist.localCoord2 - seed_ref_y;
-            existDist = std::sqrt(dx * dx + dy * dy);
-          } else {
-            if (mExist.plane == 0)
-              existDist = std::abs(mExist.localCoord - seed_ref_x);
-            else
-              existDist = std::abs(mExist.localCoord - seed_ref_y);
-          }
-          if (dist < existDist) it->second = i;
-        }
-      }
-
-      // Build source link list for this seed (one per surface, sorted by X)
-      std::vector<Acts::SourceLink> allSourceLinks;
-      allSourceLinks.reserve(bestHitPerSurface.size());
-      for (const auto& [gid, idx] : bestHitPerSurface) {
-        SNDSourceLink ssl;
-        ssl.index = idx;
-        ssl.setGeometryId(gid);
-        allSourceLinks.emplace_back(ssl);
-      }
-      std::sort(allSourceLinks.begin(), allSourceLinks.end(),
-                [&](const Acts::SourceLink& a, const Acts::SourceLink& b) {
-                  const auto& ma = measurements[a.get<SNDSourceLink>().index];
-                  const auto& mb = measurements[b.get<SNDSourceLink>().index];
-                  return ma.surface->center(gctx).x() <
-                         mb.surface->center(gctx).x();
-                });
-
       // ---- Create seed parameters -------------------------------------------
+      // Hit selection is delegated to the CKF's MeasurementSelector (chi2 cut).
       auto seedParamsResult = Acts::BoundTrackParameters::create(
           gctx, sfSeed->getSharedPtr(), seedPos4, seedDir, seedQoverP,
           seedCov, Acts::ParticleHypothesis::muon());
@@ -1214,66 +1335,93 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
       }
       const auto& seedParams = *seedParamsResult;
 
-      // ---- KF options -------------------------------------------------------
+      // ---- CKF options ------------------------------------------------------
       Acts::PropagatorPlainOptions pOptions(gctx, m_mctx);
       pOptions.direction = Acts::Direction::Forward();
-      pOptions.stepping.maxStepSize = 10.0;
-      pOptions.maxSteps = 10000;
+      pOptions.stepping.maxStepSize = m_maxStepSize.value();
+      pOptions.maxSteps = static_cast<std::size_t>(m_maxPropSteps.value());
 
-      Acts::KalmanFitterOptions<Acts::VectorMultiTrajectory> kfOptions(
+      Acts::CombinatorialKalmanFilterOptions<SNDTrackContainer> ckfOptions(
           gctx, m_mctx, std::cref(m_cctx),
-          extensions,
+          ckfExtensions,
           pOptions,
-          nullptr,
-          false,
-          false);
+          true,
+          true);
 
-      // ---- Run KF -----------------------------------------------------------
-      auto trackBackend = std::make_shared<Acts::VectorTrackContainer>();
-      auto trajBackend  = std::make_shared<Acts::VectorMultiTrajectory>();
-      SNDTrackContainer kfTracks(trackBackend, trajBackend);
+      // ---- Seed surface diagnostic ------------------------------------------
+      if (evtNum < 1 && iSeed == 0) {
+        const Acts::Surface* sf = &seedParams.referenceSurface();
+        debug() << "[ACTSProtoTracker] DIAG evt=0 seed=0: seedSurf geoId="
+                << sf->geometryId()
+                << " center=" << sf->center(gctx).transpose() << endmsg;
+        // allSurfaces is the same list injected into the navigator
+        bool found = std::any_of(
+            allSurfaces.begin(), allSurfaces.end(),
+            [sf](const Acts::Surface* s){ return s == sf; });
+        debug() << "[ACTSProtoTracker] DIAG: seedSurf in allSurfaces=" << found
+                << " allSurfaces.size()=" << allSurfaces.size() << endmsg;
+      }
 
-      SNDKalmanFitter kf(std::move(propagator_i),
-                         Acts::getDefaultLogger("KF", Acts::Logging::WARNING));
+      // ---- Run CKF ----------------------------------------------------------
+      auto ckfResult = ckf.findTracks(seedParams, ckfOptions, ckfTracks);
 
-      // Always use the full surface sequence.
-      // The KF will mark surfaces before the first hit as holes — this is fine.
-      auto kfResult = kf.fit(
-          allSourceLinks.begin(), allSourceLinks.end(),
-          seedParams,
-          kfOptions,
-          allSurfaces,        // full surface sequence, always from first surface
-          kfTracks);
-
-      if (!kfResult.ok()) {
+      if (!ckfResult.ok()) {
         warning() << "[ACTSProtoTracker] evt=" << evtNum
                   << " seed=" << iSeed
-                  << " KF failed: " << kfResult.error() << endmsg;
+                  << " CKF failed: " << ckfResult.error() << endmsg;
         continue;
       }
 
-      const auto& kfTrack = *kfResult;
-      const std::size_t nMeas = kfTrack.nMeasurements();
+      const auto& ckfTrackVec = *ckfResult;
 
-      debug() << "[ACTSProtoTracker] evt=" << evtNum
-              << " seed=" << iSeed
-              << " KF nMeas=" << nMeas
-              << " nHoles=" << kfTrack.nHoles()
-              << " chi2=" << kfTrack.chi2() << endmsg;
+      if (evtNum < 1) {
+        debug() << "[ACTSProtoTracker] DIAG evt=" << evtNum
+                << " seed=" << iSeed
+                << " ckfTrackVec.size()=" << ckfTrackVec.size() << endmsg;
+      }
 
-      // ---- Write output if track is good ------------------------------------
-      if (nMeas >= 3) {
-        // ---- Duplicate rejection -------------------------------------------
-        // Build fingerprint: set of measurement (hit) indices used by this fit.
-        // Two tracks are duplicates if they share too many of the same hits,
-        // not just the same surfaces (which would always be 100% overlap since
-        // both seeds visit all surfaces).
-        std::set<std::size_t> fingerprint;
-        for (const auto& [gid, idx] : bestHitPerSurface) {
-          fingerprint.insert(idx);
+      // ---- Process CKF results: select first acceptable track per seed ------
+      // Standard goodness-of-fit convention:
+      //   chi² = Σ per-state innovation chi² (filled by ACTS during filtering)
+      //   ndf  = Σ calibratedSize − n_fit_params   (5 helix params: loc0, loc1,
+      //          phi, theta, q/p; ACTS's nDoF() returns Σ calibratedSize only).
+      // For a well-fit track, chi²/ndf is centered at ≈ 1.
+      constexpr int kHelixParams = 5;
+      for (const auto& ckfTrack : ckfTrackVec) {
+        const std::size_t nMeas    = ckfTrack.nMeasurements();
+        const int         rawDof   = static_cast<int>(ckfTrack.nDoF());
+        const int         ndf      = std::max(1, rawDof - kHelixParams);
+        const double      chi2     = ckfTrack.chi2();
+        const double      chi2Ndf  = chi2 / static_cast<double>(ndf);
+
+        debug() << "[ACTSProtoTracker] evt=" << evtNum
+                << " seed=" << iSeed
+                << " CKF nMeas=" << nMeas
+                << " nHoles=" << ckfTrack.nHoles()
+                << " chi2=" << chi2
+                << " ndf=" << ndf
+                << " chi2/ndf=" << chi2Ndf << endmsg;
+
+        if (nMeas < 3) continue;
+
+        if (chi2Ndf > m_maxChi2PerNdf.value()) {
+          debug() << "[ACTSProtoTracker] evt=" << evtNum
+                  << " seed=" << iSeed
+                  << " rejected: chi2/ndf=" << chi2Ndf << endmsg;
+          continue;
         }
 
-        // Check overlap with already accepted tracks.
+        // ---- Duplicate rejection ------------------------------------------
+        // Build fingerprint from measurement track states (source link indices).
+        std::set<std::size_t> fingerprint;
+        for (const auto& ts : ckfTrack.trackStatesReversed()) {
+          if (ts.typeFlags().test(Acts::TrackStateFlag::MeasurementFlag) &&
+              ts.hasUncalibratedSourceLink()) {
+            fingerprint.insert(
+                ts.getUncalibratedSourceLink().template get<SNDSourceLink>().index);
+          }
+        }
+
         bool isDuplicate = false;
         for (const auto& accepted : acceptedFingerprints) {
           std::size_t nShared = 0;
@@ -1283,7 +1431,6 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
           const double smaller = static_cast<double>(
               std::min(fingerprint.size(), accepted.size()));
           const double overlapFraction = (smaller > 0) ? nShared / smaller : 0.0;
-
           if (overlapFraction > kDuplicateOverlapFraction) {
             isDuplicate = true;
             debug() << "[ACTSProtoTracker] evt=" << evtNum
@@ -1293,30 +1440,17 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
             break;
           }
         }
+        if (isDuplicate) continue;
 
-        if (isDuplicate) continue;  // skip to next seed
-
-        const double chi2PerMeas = kfTrack.chi2() / std::max(1.0, (double)nMeas);
-        if (chi2PerMeas > m_maxChi2PerMeas.value()) {
-          debug() << "[ACTSProtoTracker] evt=" << evtNum
-          << " seed=" << iSeed
-          << " rejected: chi2/nMeas=" << chi2PerMeas << endmsg;
-          continue;
-        }
-
-        // Accept this track
         acceptedFingerprints.push_back(fingerprint);
 
         // ---- Write output --------------------------------------------------
         auto track = output->create();
         track.setType(1);
-        track.setChi2(static_cast<float>(kfTrack.chi2()));
-        track.setNdf(static_cast<int>(kfTrack.nDoF()));
+        track.setChi2(static_cast<float>(chi2));
+        track.setNdf(ndf);  // already Σ-dim − 5; downstream uses chi2/ndf directly
 
         // Store seed transverse position as the first TrackState (location=AtIP).
-        // D0 = seed transverse X [mm] (DD4hep convention)
-        // Z0 = seed transverse Y [mm] (DD4hep convention)
-        // This allows the event display to reconstruct per-track hit assignment.
         {
           edm4hep::TrackState seedState{};
           seedState.location = edm4hep::TrackState::AtIP;
@@ -1325,37 +1459,181 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
           track.addToTrackStates(seedState);
         }
 
+        // Write per-surface filtered states for event display / analysis.
+        // We first COLLECT each per-surface edm4hep::TrackState in a local
+        // vector, then in a second pass pair-average adjacent U/V stereo
+        // partners (|Δz|<5 mm, opposite-sign omega) into a single TrackState
+        // per layer.  Rationale: on a SciFi strip surface only loc0 receives a
+        // measurement update; the smoothed loc1 stays at the propagated prior.
+        // The bound-to-global rotation then maps any δ_loc1 error into
+        // ±sin(α)·δ in global x and ±cos(α)·δ in y, with the sign flipping
+        // between U(+α) and V(−α) planes — the visible zigzag.  Averaging the
+        // two partners cancels this to first order.  Non-stereo states
+        // (SiTarget, SiPad) and unpaired stereo states are emitted unchanged.
         try {
-          auto tipIdx = kfTrack.tipIndex();
-          auto& mutableTraj = kfTracks.trackStateContainer();
+          auto tipIdx = ckfTrack.tipIndex();
+          auto& mutableTraj = ckfTracks.trackStateContainer();
+          std::vector<edm4hep::TrackState> collected;
           while (true) {
             auto ts = mutableTraj.getTrackState(tipIdx);
             if (ts.hasCalibrated()) {
               edm4hep::TrackState edm4ts;
               edm4ts.location  = edm4hep::TrackState::AtOther;
               edm4ts.D0        = 0.0f;
-              edm4ts.Z0        = 0.0f;
+              // Z0 is unused on AtOther states (only AtIP uses it for seed Y).
+              // Carry the per-state innovation chi² here so downstream tools can
+              // see WHICH surface drives the fit quality — track-total chi² is
+              // useless for that.
+              edm4ts.Z0        = static_cast<float>(ts.chi2());
+              const auto& surf  = ts.referenceSurface();
+              const float beamZ = static_cast<float>(surf.center(gctx).x());
+
+              // Detect stereo rotation: R * ŷ projected onto ACTS Z = sin(±α).
+              // Non-stereo surfaces have stereoTiltZ ≈ 0; MTC SciFi U/V have ±sin(α).
+              const Acts::Vector3 localYinGlobal =
+                  surf.transform(gctx).rotation() * Acts::Vector3::UnitY();
+              const double stereoTiltZ = localYinGlobal.z();  // sin(+α) or sin(−α)
+              const double cosAlpha    = localYinGlobal.y();  // cos(α), > 0 always
+              // Store surface tilt in omega for stereo pairing in display.
+              // Non-stereo surfaces have omega≈0; MTC SciFi U/V have ±sin(5°).
+              edm4ts.omega = static_cast<float>(stereoTiltZ);
+
+              // Measurement convention on stereo surfaces:
+              //   loc0 = cos(α)·dd_x − sin(α)·dd_y   (= −eBoundLoc0_geometric)
+              //   loc1 = cos(α)·dd_y + sin(α)·dd_x   (=  eBoundLoc1_geometric)
+              // Inverse rotation recovers DD4hep coordinates:
+              //   dd_x =  loc0·cosAlpha + loc1·stereoTiltZ
+              //   dd_y = −loc0·stereoTiltZ + loc1·cosAlpha
+              // For non-stereo surfaces: stereoTiltZ=0, cosAlpha=1 → dd_x=loc0, dd_y=loc1.
+              auto toGlobalX = [&](double loc0, double loc1) -> float {
+                return static_cast<float>(loc0 * cosAlpha + loc1 * stereoTiltZ);
+              };
+              auto toGlobalY = [&](double loc0, double loc1) -> float {
+                return static_cast<float>(-loc0 * stereoTiltZ + loc1 * cosAlpha);
+              };
+
               if (ts.hasSmoothed()) {
                 edm4ts.phi       = static_cast<float>(
                     ts.smoothed()[Acts::eBoundPhi]);
                 edm4ts.tanLambda = static_cast<float>(
                     std::tan(M_PI / 2.0 - ts.smoothed()[Acts::eBoundTheta]));
-                edm4ts.omega     = static_cast<float>(
-                    ts.smoothed()[Acts::eBoundQOverP]);
+                const double loc0 = ts.smoothed()[Acts::eBoundLoc0];
+                const double loc1 = ts.smoothed()[Acts::eBoundLoc1];
+                edm4ts.D0 = static_cast<float>(loc0);  // raw strip measurement for stereo pairing
+                edm4ts.referencePoint = edm4hep::Vector3f{
+                    toGlobalX(loc0, loc1),
+                    toGlobalY(loc0, loc1),
+                    beamZ};
               } else if (ts.hasFiltered()) {
                 edm4ts.phi       = static_cast<float>(
                     ts.filtered()[Acts::eBoundPhi]);
                 edm4ts.tanLambda = 0.0f;
-                edm4ts.omega     = 0.0f;
+                const double loc0 = ts.filtered()[Acts::eBoundLoc0];
+                const double loc1 = ts.filtered()[Acts::eBoundLoc1];
+                edm4ts.D0 = static_cast<float>(loc0);  // raw strip measurement for stereo pairing
+                edm4ts.referencePoint = edm4hep::Vector3f{
+                    toGlobalX(loc0, loc1),
+                    toGlobalY(loc0, loc1),
+                    beamZ};
               } else {
                 edm4ts.phi       = 0.0f;
                 edm4ts.tanLambda = 0.0f;
-                edm4ts.omega     = 0.0f;
+                edm4ts.referencePoint = edm4hep::Vector3f{0.f, 0.f, beamZ};
               }
-              track.addToTrackStates(edm4ts);
+
+              collected.push_back(edm4ts);
             }
+
+            // TEMP DIAG (Issue 2/3) — fires for EVERY state (Meas+Outlier+Hole)
+            // for first 3 events. For SiPad investigation: a SiPad surface
+            // should appear here with isHole=1 (or isOutl=1 if chi2 fails);
+            // pred(loc0,loc1) vs meas(loc0,loc1) shows whether the chi2 is
+            // huge (rejected) or small (would be accepted).
+            if (evtNum < 3) {
+              const auto& surfD = ts.referenceSurface();
+              const float zD = static_cast<float>(surfD.center(gctx).x());
+              const auto tf = ts.typeFlags();
+              const bool isMeas = tf.test(Acts::TrackStateFlag::MeasurementFlag);
+              const bool isOutl = tf.test(Acts::TrackStateFlag::OutlierFlag);
+              const bool isHole = tf.test(Acts::TrackStateFlag::HoleFlag);
+              const char* region = (zD < -150.f) ? "SiT"
+                                 : (zD < 250.f)  ? "SiP"
+                                                 : "MTC";
+              double pL0 = 0., pL1 = 0., sL0 = -1., sL1 = -1.;
+              if (ts.hasPredicted()) {
+                pL0 = ts.predicted()[Acts::eBoundLoc0];
+                pL1 = ts.predicted()[Acts::eBoundLoc1];
+                const auto& pc = ts.predictedCovariance();
+                sL0 = std::sqrt(pc(Acts::eBoundLoc0, Acts::eBoundLoc0));
+                sL1 = std::sqrt(pc(Acts::eBoundLoc1, Acts::eBoundLoc1));
+              }
+              std::ostringstream ms;
+              if (ts.hasCalibrated()) {
+                const unsigned cs = ts.calibratedSize();
+                if (cs == 2) {
+                  auto c2 = ts.template calibrated<2>();
+                  ms << " meas(" << c2[0] << "," << c2[1] << ") cs=2";
+                } else if (cs == 1) {
+                  auto c1 = ts.template calibrated<1>();
+                  ms << " meas(" << c1[0] << ",-) cs=1";
+                }
+              }
+              info() << "[ACTSProtoTracker][DIAG-TS] evt=" << evtNum
+                     << " seed=" << iSeed
+                     << " z=" << zD << " " << region
+                     << " M=" << isMeas << " O=" << isOutl << " H=" << isHole
+                     << " pred(" << pL0 << "," << pL1 << ")"
+                     << " sig(" << sL0 << "," << sL1 << ")"
+                     << ms.str()
+                     << endmsg;
+            }
+
             if (!ts.hasPrevious()) break;
             tipIdx = ts.previous();
+          }  // end while (per-surface collect)
+
+          // ---- Pair-average U/V stereo partners ---------------------------
+          // Sort collected states by global z (beam axis), then walk pairs.
+          // Pairing condition: both have nonzero omega (stereo), opposite
+          // sign, and |Δz| < 5 mm.  Output omega is set to 0 to signal
+          // "already paired" to downstream consumers (event display, diag).
+          std::sort(collected.begin(), collected.end(),
+                    [](const edm4hep::TrackState& a,
+                       const edm4hep::TrackState& b) {
+                      return a.referencePoint.z < b.referencePoint.z;
+                    });
+          for (std::size_t i = 0; i < collected.size(); ) {
+            bool didPair = false;
+            if (i + 1 < collected.size()) {
+              const auto& a = collected[i];
+              const auto& b = collected[i + 1];
+              const float dz = std::abs(a.referencePoint.z - b.referencePoint.z);
+              if (std::abs(a.omega) > 0.01f &&
+                  std::abs(b.omega) > 0.01f &&
+                  a.omega * b.omega < 0.0f &&
+                  dz < 5.0f) {
+                edm4hep::TrackState avg;
+                avg.location  = edm4hep::TrackState::AtOther;
+                avg.D0        = 0.0f;     // loc0 not meaningful after pairing
+                // Z0 carries per-state chi²; merged pair gets the sum (each
+                // partner contributed one innovation update with E[chi²]=1).
+                avg.Z0        = a.Z0 + b.Z0;
+                avg.omega     = 0.0f;     // signals "paired/non-stereo"
+                avg.phi       = 0.5f * (a.phi + b.phi);
+                avg.tanLambda = 0.5f * (a.tanLambda + b.tanLambda);
+                avg.referencePoint = edm4hep::Vector3f{
+                    0.5f * (a.referencePoint.x + b.referencePoint.x),
+                    0.5f * (a.referencePoint.y + b.referencePoint.y),
+                    0.5f * (a.referencePoint.z + b.referencePoint.z)};
+                track.addToTrackStates(avg);
+                i += 2;
+                didPair = true;
+              }
+            }
+            if (!didPair) {
+              track.addToTrackStates(collected[i]);
+              ++i;
+            }
           }
         } catch (const std::exception& e) {
           warning() << "[ACTSProtoTracker] evt=" << evtNum
@@ -1363,14 +1641,14 @@ StatusCode ACTSProtoTracker::execute(const EventContext&) const {
                     << " trackStates iteration failed: " << e.what() << endmsg;
         }
         ++nTracks;
-
+        break;  // take first acceptable track per seed
       }
 
     }  // end loop over seeds
 
     info() << "[ACTSProtoTracker] evt=" << evtNum
            << " measurements=" << measurements.size()
-           << " KF tracks=" << nTracks << endmsg;
+           << " CKF tracks=" << nTracks << endmsg;
 
     return StatusCode::SUCCESS;
   } catch (const std::exception& e) {
