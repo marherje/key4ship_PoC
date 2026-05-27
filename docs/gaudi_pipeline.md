@@ -111,16 +111,28 @@ Two parallel paths:
 **Step 1 — Measurement converters:** Convert EDM4HEP hit collections to ACTS `SourceLink`/measurement objects keyed to ACTS surfaces from `ACTSGeoSvc`.
 
 **Step 2 — ACTSProtoTracker:**
-1. Hough transform seeding (2D, using SiTarget X×Y crossings, SiPad 2D hits, and MTC U×V stereo crossings)
-2. Kalman filter track fit using ACTS `KalmanFitter` with `IronSlabBField` (MTC iron) or `ConstantBField(0,0,0)`
-3. Outputs `ACTSTracks` collection to EDM4HEP
+1. Hough transform seeding (2D, using SiTarget X×Y crossings, SiPad 2D hits, and MTC U×V stereo crossings) — provides approximate (x, y) starting position
+2. `CombinatorialKalmanFilter` (CKF) track finding using `EigenStepper` + `SNDFixedNavigator` + `IronSlabBField`; propagates through all 150 surfaces globally (SiTarget → SiPad → MTC)
+3. Outputs `ACTSTracks` collection with per-surface `AtOther` fitted states to EDM4HEP
+
+### CKF architecture
+
+The CKF is a global tracker starting from the first detector surface (SiTarget entrance, ACTS X ≈ −370 mm) and traversing all 150 surfaces in ACTS X order. It naturally handles curved tracks in the MTC iron field via `EigenStepper`.
+
+| Component | Location | Role |
+|-----------|----------|------|
+| `SNDFixedNavigator` | `ACTSProtoTracker.cpp` | Wraps `DirectNavigator`; injects 150-surface list at `makeState()` so CKF's `setPlainOptions()` cannot erase it |
+| `SNDDetectorElement` | `ACTSGeoSvc.cpp` | `DetectorElementBase` subclass; makes `associatedDetectorElement() != nullptr` so `CKFActor` treats surfaces as sensitive |
+| `IronSlabBField` | `ACTSProtoTracker.cpp` | Returns B_y = 1.7 T inside MTC iron slabs, zero elsewhere |
+| `SNDSourceLinkAccessor` | `ACTSProtoTracker.cpp` | Binary-search lookup: maps surface geoID → measurement range in O(log N) |
+| `SNDCalibrator` | `ACTSProtoTracker.cpp` | Sets calibrated coordinates and projector subspace (eBoundLoc0/Loc1) per detector type |
 
 ### Pipeline feature matrix
 
 | Feature | `muon_pipeline` | other pipelines |
 |---|---|---|
 | `MTCSciFiMeasConverter` active | **Yes** | No |
-| MTC hits in Hough seeding and KF | **Yes** | No |
+| MTC hits in CKF | **Yes** | No |
 | Iron slab B-field (`IronFieldRanges`) | **Yes** | No — `ConstantBField(0,0,0)` |
 | Geometry params from `parse_geometry` | **Yes** | No — hardcoded |
 
@@ -130,17 +142,19 @@ Two parallel paths:
 | Property | Default | Description |
 |----------|---------|-------------|
 | `AutoSeed` | false | Use Hough seeding automatically |
-| `MaxSeeds` | 5 | Maximum number of seeds to fit |
+| `MaxSeeds` | 5 | Maximum number of seeds to try |
 | `HoughBinSize` | 5.0 | Hough accumulator bin size [mm] |
 | `HoughHalfSize` | 200.0 | Hough accumulator range [mm] |
 | `HoughMinVotes` | 3 | Minimum votes to form a seed |
-| `InputMTC` | `"MTCSciFiMeasurements"` | MTC measurement collection (must be produced by `MTCSciFiMeasConverter`) |
+| `InputMTC` | `"MTCSciFiMeasurements"` | MTC measurement collection |
 | `MTCStereoAngle` | 5.0 | MTC SciFi stereo angle [degrees] |
 | `IronFieldRanges` | `[]` | Per-slab field map: `[xlo,xhi, ylo,yhi, zlo,zhi, by] × N` in ACTS coords [mm, T] |
+| `Chi2CutOff` | 15.0 | MeasurementSelector per-surface chi2 cut |
+| `NumMeasCutOff` | 1 | Max measurements accepted per surface |
 | `IsolationWindow` | 0.0 | 2D distance [mm] for crossing isolation filter (0 = disabled) |
 | `IsolationMaxNeighbors` | 2 | Max neighbors within window to be considered track-like |
-| `HoughMaxMultiplicity` | 1e9 | Max crossings/station ratio to accept a Hough peak (1e9 = disabled) |
-| `MaxChi2PerMeas` | 500.0 | Track acceptance threshold on chi²/nMeas |
+| `HoughMaxMultiplicity` | 1e9 | Max crossings/station ratio (1e9 = disabled) |
+| `MaxChi2PerMeas` | 500.0 | Track acceptance threshold on chi²/nMeas after CKF |
 
 ### ACTSGeoSvc in job config
 ```python

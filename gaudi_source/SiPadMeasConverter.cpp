@@ -145,7 +145,7 @@ StatusCode SiPadMeasConverter::execute(const EventContext&) const {
     // SiPad surfaces start at index 20 in allSurfaces() (after 20 SiTarget).
     // Index: 20 + layer
     const auto& allSurfaces       = m_geoSvc->allSurfaces();
-    const std::size_t sipadOffset = 20;  // number of SiTarget surfaces
+    const std::size_t sipadOffset = 40;  // number of SiTarget surfaces
 
     // Precompute pixel variances
     // Z=beam: SiPad measures X and Y (transverse to beam)
@@ -196,7 +196,7 @@ StatusCode SiPadMeasConverter::execute(const EventContext&) const {
       auto mhit = output->create();
       mhit.setCellID(cid);
       mhit.setType(1);      // detector ID: 1 = SiPad
-      mhit.setQuality(-1);  // pixel detector: no plane distinction
+      mhit.setQuality(layer);  // SiPad layer (used by ACTSProtoTracker for surfaceByAddress)
       mhit.setTime(hitTime);
       mhit.setEDep(hit.getEnergy());
       mhit.setEDepError(0.0f);
