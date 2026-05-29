@@ -13,61 +13,7 @@ Detector geometry and hit-display parameters are driven entirely by
 
 ---
 
-## Step 1 — Extract sensitive-layer Z positions
-
-Run `inspect_SND.py` from the `event_display/` directory.
-It loads the DD4hep geometry and walks the ROOT TGeo tree to find every
-sensitive silicon slice, printing its global Z position (in cm):
-
-```bash
-cd key4ship_PoC/event_display
-python inspect_SND.py
-```
-
-Example output:
-
-```
-SiTarget_X   SiTarget_vol_0_layer_0_slice_2   x= -37.04
-SiTarget_Y   SiTarget_vol_0_layer_0_slice_4   x= -36.46
-...
-
-SITARGET_X_Z = [
-    -37.04, -35.94, -34.84, ...
-]
-SITARGET_Y_Z = [
-    -36.46, -35.36, -34.26, ...
-]
-SIPAD_Z = [
-    -13.95, -12.50, -11.05, ...
-]
-```
-
-> The positions at the bottom of the output are formatted as Python lists
-> ready to be pasted directly into the config file.
-
----
-
-## Step 2 — Update `detector_config.json`
-
-Open `detector_config.json` and replace the `"layers_z_cm"` arrays with the
-values printed by `inspect_SND.py`:
-
-| JSON key               | Value from inspect output |
-|------------------------|---------------------------|
-| `SiTarget_StripX` → `"layers_z_cm"` | `SITARGET_X_Z` list |
-| `SiTarget_StripY` → `"layers_z_cm"` | `SITARGET_Y_Z` list |
-| `SiPad`           → `"layers_z_cm"` | `SIPAD_Z` list      |
-
-Also update the `"geometry"` section:
-- `SiTarget planes` → union of `SITARGET_X_Z` and `SITARGET_Y_Z` (both planes per layer)
-- `SiPad planes`    → `SIPAD_Z`
-
-The `"color"` and `"voxel"` fields in the config control the appearance of
-each detector; edit them freely without re-running `inspect_SND.py`.
-
----
-
-## Step 3 — Run the event display
+## How to run the event display
 
 ```bash
 python event_display_eve.py \
