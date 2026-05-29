@@ -15,7 +15,6 @@ Usage:
 import argparse
 import json
 import math
-import numpy as np
 import os
 import ROOT
 
@@ -207,9 +206,12 @@ def build_hits(eve, hits_file, window_id, config):
             xc = xs[i] * mm2cm
             yc = 0.0 if stereo_deg != 0.0 else ys[i] * mm2cm
             zc = zs[i] * mm2cm
-            snap_z = nearest_plane(np.array([zc]) if type(zc) == float else zc, layers_z)
-            if not (z_min <= snap_z <= z_max):
+            # Filter on the raw hit Z so hits from adjacent MTC stations are
+            # rejected before snapping. Using snap_z here caused out-of-station
+            # hits to snap to the nearest boundary layer and pass the range check.
+            if not (z_min <= zc <= z_max):
                 continue
+            snap_z = nearest_plane(zc, layers_z)
             gs = make_box(f"{det_name}_hit_{i}",
                           dx, dy, dz,
                           xc, yc, snap_z,
@@ -271,7 +273,13 @@ def extract_z_from_geometry(compact_xml, config):
         zs = sorted(set(r["zs"]))
         r["entry"]["layers_z_cm"] = zs
         if zs:
-            # 3 cm margin safely separates MTC stations (~82 cm total length each)
+            # 3 cm margin covers hits anywhere inside the half-layer at the
+            # station edge (~3.7 cm half-spacing). It stays within the station
+            # because the gap between the last sensitive layer of one MTC station
+            # and the first of the next is ~5.4 cm (1 mm gap + 50 mm Fe + 3 mm
+            # inner iron), so 3 cm < 5.4 cm and no cross-station contamination
+            # occurs — provided the filter is applied to the raw hit Z (zc),
+            # not to the snapped Z.
             r["entry"]["z_range"] = {"min": zs[0] - 3.0, "max": zs[-1] + 3.0}
         print(f"[Geometry] {r['entry']['name']}: {len(zs)} layers extracted")
 
