@@ -1,5 +1,11 @@
 from k4FWCore import ApplicationMgr, IOSvc
 from Configurables import EDM4HEP2RNTuple
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "simulation" / "geometry"))
+from parse_geometry import SNDGeometry
+geo = SNDGeometry()
 
 iosvc = IOSvc()
 iosvc.Input = ["tracks.edm4hep.root"]
@@ -7,27 +13,38 @@ iosvc.Input = ["tracks.edm4hep.root"]
 converter = EDM4HEP2RNTuple("EDM4HEP2RNTuple")
 converter.InputFile      = "tracks.edm4hep.root"
 converter.OutputFile     = "ShipHits.root"
-converter.NTupleNames    = ["SiTarget", "SiPad"]
-converter.Collections    = ["SiTargetHitsWindowed", "SiPadHitsWindowed"]
-converter.BitFields      = [
-    "system:8,layer:8,slice:4,plane:1,column:2,row:2,strip:14",
-    "system:8,layer:8,slice:4,x:9,y:9"
+converter.NTupleNames    = ["SiTarget", "SiPad", "MTCSciFi", "MTCScint"]
+converter.Collections    = [
+    "SiTargetHitsWindowed",
+    "SiPadHitsWindowed",
+    "MTCSciFiHitsWindowed",
+    "MTCScintHitsWindowed",
 ]
-converter.SourceIDParams = ["SiTargetSourceIDs", "SiPadSourceIDs"]
-converter.DetectorIDs         = [0, 1]
-converter.TrackFile           = "tracks.edm4hep.root"   # path to tracking output
-converter.TrackCollectionName = "ACTSTracks"    # default, can omit
+converter.BitFields      = [
+    geo.bitfields["SiTargetHits"],
+    geo.bitfields["SiPadHits"],
+    geo.bitfields["MTCDetHits"],
+    geo.bitfields["MTCDetHits"],
+]
+converter.SourceIDParams = ["SiTargetSourceIDs", "SiPadSourceIDs",
+                            "MTCSciFiSourceIDs", "MTCScintSourceIDs"]
+converter.DetectorIDs         = [0, 1, 3, 3]
+converter.TrackFile           = "tracks.edm4hep.root"
+converter.TrackCollectionName = "ACTSTracks"
 converter.MeasCollections = [
     "SiTargetMeasurements",
     "SiPadMeasurements",
+    "MTCSciFiMeasurements",
 ]
 converter.MeasNtupleNames = [
     "SiTargetMeas",
     "SiPadMeas",
+    "MTCSciFiMeas",
 ]
 converter.MeasBitFields = [
-    "system:8,layer:8,slice:4,plane:1,column:2,row:2,strip:14",
-    "system:8,layer:8,slice:4,x:9,y:9",
+    geo.bitfields["SiTargetHits"],
+    geo.bitfields["SiPadHits"],
+    geo.bitfields["MTCDetHits"],
 ]
 
 ApplicationMgr(
