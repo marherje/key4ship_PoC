@@ -20,6 +20,10 @@ shuffler.CollectionsSiPad = [
     "SiPadHits",
     "SiPadHits"
 ]
+shuffler.CollectionsMTC = [
+    "MTCDetHits",
+    "MTCDetHits"
+]
 shuffler.MaxEventsPerSource       = 50
 shuffler.OutputFile               = "shuffled.edm4hep.root"
 shuffler.OutputCollectionSiTarget = "SiTargetHitsMerged"
