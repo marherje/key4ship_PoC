@@ -1,0 +1,14 @@
+# Geometry variant geoA: SiTarget 30 + SiPad 20 + MTC (20+20+20)
+# Apply with:  python3 config.py --params parameters_geoA.yaml --output SND_compact_geoA.xml
+sitarget:
+  n_layers: 30
+  z_position: auto
+sipad:
+  n_layers: 20
+  z_position: auto
+mtc:
+  n_layers: 20
+  stations:
+    MTC40: {z_position: auto}
+    MTC50: {z_position: auto}
+    MTC60: {z_position: auto}

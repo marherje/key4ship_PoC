@@ -5,7 +5,7 @@ find_package(DD4hep REQUIRED COMPONENTS DDCore DDG4)
 find_package(Gaudi REQUIRED)
 find_package(k4FWCore REQUIRED)
 find_package(EDM4HEP REQUIRED)
-find_package(ROOT REQUIRED COMPONENTS ROOTNTuple)
+find_package(ROOT REQUIRED COMPONENTS ROOTNTuple Hist)
 find_package(Acts 44.3.0 REQUIRED COMPONENTS Core PluginDD4hep)
 find_package(k4ActsTracking REQUIRED)
 
@@ -36,6 +36,8 @@ gaudi_add_module(SND_reco
     gaudi_source/ContributionInspector.cpp
     gaudi_source/EventWindowSplitter.cpp
     gaudi_source/EventShuffler.cpp
+    gaudi_source/EventOverlay.cpp
+    gaudi_source/MCParticleAnalyzer.cpp
     gaudi_source/EDM4HEP2RNTuple.cpp
     gaudi_source/ACTSGeoSvc.cpp
     gaudi_source/ACTSProtoTracker.cpp
@@ -50,6 +52,7 @@ gaudi_add_module(SND_reco
     DD4hep::DDCore
     DD4hep::DDRec
     ROOT::ROOTNTuple
+    ROOT::Hist
     Acts::Core
     Acts::PluginDD4hep
     k4ActsTracking::k4ActsTracking

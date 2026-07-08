@@ -37,7 +37,7 @@ for _z_ctr, _yhalf, _zhalf in _station_params:
 # ──────────────────────────────────────────────────────────────────────────────
 
 iosvc = IOSvc()
-iosvc.Input          = "timewindows.edm4hep.root"
+iosvc.Input          = "events.edm4hep.root"
 iosvc.Output         = "tracks.edm4hep.root"
 # keep * forwards all input collections (including MTCSciFiHitsWindowed and
 # MTCScintHitsWindowed) to the output so job5 can write them to the RNTuple.
@@ -106,6 +106,19 @@ proto.HoughMaxMultiplicity  = 10.0  # safety net after isolation filter
 # CKF MeasurementSelector: per-surface chi2 cut and max measurements
 proto.Chi2CutOff            = 70.0  # local chi2 to accept a measurement
 proto.NumMeasCutOff         = 1     # max measurements per surface
+# Iterative annealed fit: SiPad up-weighted during the first CKF passes to
+# anchor the trajectory in y (SiPad is the only unambiguous 2D detector),
+# relaxed back to nominal over the iterations; final KalmanFitter refit at
+# nominal weights on the frozen hit set gives unbiased parameters.
+proto.SiPadWeight           = 16.0  # sigma_eff ~ 0.4 mm during pattern reco
+proto.AnnealingIterations   = 3
+proto.FinalRefit            = True
+proto.SeedCleaning          = True   # mask used hits between seeds
+# Shower-hit purge of the measurement pool, per detector [SiTarget, SiPad, MTC].
+# Scales differ: 75um strips (delta-ray clusters ~mm) vs 5.5mm pads vs MTC
+# U/V pair combinatorics (excluded: multiplicity there is not physical density).
+proto.HitPurgeWindow        = [1.0, 8.0, 0.0]   # mm
+proto.HitPurgeMaxNeighbors  = [8, 4, 0]
 # Crossing isolation filter for shower rejection
 # Filters crossings (SiTarget) and positions (SiPad) by 2D density
 # within each station/layer. Isolated = few neighbors within IsolationWindow.

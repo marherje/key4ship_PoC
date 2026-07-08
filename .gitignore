@@ -11,3 +11,18 @@
 # Temporary files
 *~
 *.tmp
+
+# Agents
+agent_instructions.md
+
+# Build and install
+build
+install
+
+# Simulation files
+simulation/run_script/data
+simulation/run_script/steer
+simulation/run_script/macros
+simulation/geometry/__pycache__
+simulation/run_script/__pycache__
+*__pycache__*

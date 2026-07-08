@@ -1,0 +1,34 @@
+# ---------------------------------------------------------------------------
+# Geometry parameters for the SND detector.
+#
+# Edit this file and run:   python3 config.py          (from this directory)
+# to apply the values to SND_compact.xml. Both the ddsim simulation and the
+# reconstruction (ACTSGeoSvc, parse_geometry) read that XML, so one apply
+# reconfigures the whole chain — no steering-file changes needed.
+#
+# z positions are in mm, DD4hep frame (z = beam axis), and refer to the
+# CENTRE of the detector envelope. Use `auto` to keep the default derived
+# placement (detectors stack themselves and follow layer-count changes):
+#   sitarget : immediately upstream of the ECAL (ends ~10 mm before it)
+#   sipad    : ECAL centred at z = 0
+#   mtc      : station 1 starts 100 mm after the ECAL; stations 2 and 3
+#              chain one after another with a 1 mm gap
+# ---------------------------------------------------------------------------
+
+sitarget:
+  n_layers: 30
+  z_position: auto
+
+sipad:            # ECAL silicon-pad calorimeter
+  n_layers: 10
+  z_position: auto
+
+mtc:
+  n_layers: 20    # per station — the 3 stations share the layer template
+  stations:
+    MTC40:
+      z_position: auto
+    MTC50:
+      z_position: auto
+    MTC60:
+      z_position: auto
