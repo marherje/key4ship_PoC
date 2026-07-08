@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "simulation" / "geometry"))
 from parse_geometry import SNDGeometry
-geo = SNDGeometry()
+geo = SNDGeometry(str(Path(__file__).resolve().parent.parent.parent / "simulation" / "geometry" / "SND_compact_geoA.xml"))
 
 # ── MTC outer iron magnetic field map ─────────────────────────────────────────
 # All geometry constants come from SND_compact.xml via SNDGeometry.
@@ -44,7 +44,7 @@ iosvc.Output         = "tracks.edm4hep.root"
 iosvc.outputCommands = ["keep *"]
 
 geosvc = ACTSGeoSvc("ACTSGeoSvc")
-geosvc.CompactFile = "../../simulation/geometry/SND_compact.xml"
+geosvc.CompactFile = "../../simulation/geometry/SND_compact_geoA.xml"
 geosvc.OutputLevel = INFO
 
 sitarget_conv = SiTargetMeasConverter("SiTargetMeasConverter")
@@ -117,7 +117,8 @@ proto.SeedCleaning          = True   # mask used hits between seeds
 # Shower-hit purge of the measurement pool, per detector [SiTarget, SiPad, MTC].
 # Scales differ: 75um strips (delta-ray clusters ~mm) vs 5.5mm pads vs MTC
 # U/V pair combinatorics (excluded: multiplicity there is not physical density).
-proto.HitPurgeWindow        = [1.0, 8.0, 0.0]   # mm
+# Purge OFF: uniform tracker config across pairs for a clean geometry comparison
+proto.HitPurgeWindow        = [0.0, 0.0, 0.0]   # mm
 proto.HitPurgeMaxNeighbors  = [8, 4, 0]
 # Crossing isolation filter for shower rejection
 # Filters crossings (SiTarget) and positions (SiPad) by 2D density

@@ -117,7 +117,9 @@ proto.SeedCleaning          = True   # mask used hits between seeds
 # Shower-hit purge of the measurement pool, per detector [SiTarget, SiPad, MTC].
 # Scales differ: 75um strips (delta-ray clusters ~mm) vs 5.5mm pads vs MTC
 # U/V pair combinatorics (excluded: multiplicity there is not physical density).
-proto.HitPurgeWindow        = [1.0, 8.0, 0.0]   # mm
+# Purge OFF here: at small opening angles the pion travels INSIDE the
+# e+ shower cone, so density-based purging removes the pion hits too.
+proto.HitPurgeWindow        = [0.0, 0.0, 0.0]   # mm
 proto.HitPurgeMaxNeighbors  = [8, 4, 0]
 # Crossing isolation filter for shower rejection
 # Filters crossings (SiTarget) and positions (SiPad) by 2D density
