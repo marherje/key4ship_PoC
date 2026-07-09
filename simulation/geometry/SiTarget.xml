@@ -33,7 +33,7 @@
         <slice material="Silicon" thickness="SiTarget_sensor_thickness"
                sensitive="true" plane="1" vis="SiVis"/>
         <!-- Air gap after second Si plane to next absorber -->
-        <slice material="Air" thickness="SiTarget_layer_gap"
+        <slice material="Air" thickness="SiTarget_module_offset"
                sensitive="false" vis="AirVis"/>
   </layer>
 

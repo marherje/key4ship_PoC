@@ -32,6 +32,8 @@ converter.BitFields      = [
 ]
 converter.SourceIDParams = ["SiTargetSourceIDs", "SiPadSourceIDs",
                             "MTCSciFiSourceIDs", "MTCScintSourceIDs"]
+converter.ContribPDGParams = ["SiTargetContribPDGs", "SiPadContribPDGs",
+                              "MTCSciFiContribPDGs", "MTCScintContribPDGs"]
 converter.DetectorIDs         = [0, 1, 3, 3]
 converter.TrackFile           = tracks_file
 converter.TrackCollectionName = "ACTSTracks"

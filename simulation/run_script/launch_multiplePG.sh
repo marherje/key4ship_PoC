@@ -12,8 +12,6 @@
 #   ./launch_multiplePG.sh              # submit everything to HTCondor
 #   RUN_LOCAL=1 ./launch_multiplePG.sh  # run everything locally instead
 
-set -e
-
 # ======================= CONFIGURATION =======================
 nevents=100
 physlist="QGSP_BERT"

@@ -130,6 +130,7 @@ public:
         auto fE            = model->MakeField<float>("E");
         auto fT            = model->MakeField<float>("t");
         auto fSourceID     = model->MakeField<int>("source_id");
+        auto fOriginPDG    = model->MakeField<int>("origin_pdg");
         auto fTWindowStart = model->MakeField<float>("t_window_start");
 
         df.fWindowID     = fWindowID.get();
@@ -140,6 +141,7 @@ public:
         df.fE            = fE.get();
         df.fT            = fT.get();
         df.fSourceID     = fSourceID.get();
+        df.fOriginPDG    = fOriginPDG.get();
         df.fTWindowStart = fTWindowStart.get();
 
         // Dynamic BitField columns for THIS detector only — no cross-detector padding
@@ -369,6 +371,8 @@ public:
                   << endmsg;
       }
 
+      const auto& pdgParams = m_contribPDGParams.value();
+
       for (size_t i = 0; i < colls.size(); ++i) {
         const auto* hits = m_inputHandles[i]->get();
         auto& df = m_detFields[i];
@@ -378,6 +382,15 @@ public:
           sourceIDs = maybeFrame->getParameter<std::vector<int>>(params[i])
                           .value_or(std::vector<int>{});
         }
+
+        // Per-CONTRIBUTION MC-origin PDGs (concatenated in hit order). Walked
+        // with contribOffset below to attribute a per-hit origin_pdg.
+        std::vector<int> contribPDGs;
+        if (maybeFrame && i < pdgParams.size() && !pdgParams[i].empty()) {
+          contribPDGs = maybeFrame->getParameter<std::vector<int>>(pdgParams[i])
+                            .value_or(std::vector<int>{});
+        }
+        std::size_t contribOffset = 0;
 
         for (int hitIdx = 0; hitIdx < static_cast<int>(hits->size()); ++hitIdx) {
           const auto& hit       = (*hits)[hitIdx];
@@ -390,6 +403,22 @@ public:
 
           const int source_id = (hitIdx < static_cast<int>(sourceIDs.size()))
                                 ? sourceIDs[hitIdx] : 0;
+
+          // MC-origin PDG for this hit: the PDG (from the ContribPDGs parameter)
+          // of the highest-energy contribution. contribPDGs is concatenated in
+          // hit order, so this hit owns entries [contribOffset, +nContrib).
+          const unsigned nContrib = hit.contributions_size();
+          int origin_pdg = 0;
+          if (!contribPDGs.empty()) {
+            float bestE = -1.f;
+            for (unsigned k = 0; k < nContrib; ++k) {
+              const std::size_t gk = contribOffset + k;
+              if (gk >= contribPDGs.size()) break;
+              const float e = hit.getContributions(k).getEnergy();
+              if (e > bestE) { bestE = e; origin_pdg = contribPDGs[gk]; }
+            }
+          }
+          contribOffset += nContrib;
 
           // Decode BitField fields for this detector only (no zero-padding needed)
           for (auto& [fname, ptr] : df.fieldPtrs) {
@@ -404,6 +433,7 @@ public:
           *df.fE            = hit.getEnergy();
           *df.fT            = t;
           *df.fSourceID     = source_id;
+          *df.fOriginPDG    = origin_pdg;
           *df.fTWindowStart = t_window_start;
 
           m_writers[i]->Fill();
@@ -591,6 +621,13 @@ private:
       this, "SourceIDParams",
       {"SiTargetSourceIDs", "SiPadSourceIDs"},
       "Frame parameter name carrying source_id vector for each collection"};
+  Gaudi::Property<std::vector<std::string>> m_contribPDGParams{
+      this, "ContribPDGParams", {},
+      "Frame parameter name carrying the per-CONTRIBUTION MC-origin PDG vector "
+      "for each collection (e.g. SiTargetContribPDGs, written by EventOverlay). "
+      "Concatenated in hit order, so hit i owns the next contributions_size(i) "
+      "entries. Used to fill a per-hit origin_pdg (dominant contribution by "
+      "energy) for MC-truth colouring in the event display. Empty -> origin_pdg=0."};
   Gaudi::Property<std::vector<int>> m_detectorIDs{
       this, "DetectorIDs", {0, 1},
       "detector_id value (for logging) for each collection"};
@@ -663,6 +700,7 @@ private:
     float*    fE            = nullptr;
     float*    fT            = nullptr;
     int*      fSourceID     = nullptr;
+    int*      fOriginPDG    = nullptr;
     float*    fTWindowStart = nullptr;
     // Dynamic BitField field pointers for this detector only.
     std::map<std::string, int*>        fieldPtrs;

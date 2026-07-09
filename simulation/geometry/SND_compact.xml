@@ -25,53 +25,58 @@
     <constant name="world_x"    value="world_side"/>
     <constant name="world_y"    value="world_side"/>
     <constant name="world_z"    value="world_side"/>
+    <constant name="env_safety"               value="0.001*mm"/>
 
     <!-- Required by DD4hep tracking region -->
     <constant name="tracker_region_rmax" value="0*mm"/>
     <constant name="tracker_region_zmax" value="0*mm"/>
 
-    <!-- ECAL geometry constants (from ECAL_commondefs.xml) -->
-    <constant name="env_safety"              value="0.001*mm"/>
-    <constant name="Ecal_NLayers"            value="10"/>
-    <constant name="Ecal_NcellsX"            value="32"/>
-    <constant name="Ecal_NcellsY"            value="32"/>
-    <constant name="Ecal_CellSizeX"          value="5.5*mm"/>
-    <constant name="Ecal_CellSizeY"          value="5.5*mm"/>
-    <constant name="Ecal_dim_x"              value="2*Ecal_NcellsX*Ecal_CellSizeX"/>
-    <constant name="Ecal_dim_y"              value="2*Ecal_NcellsY*Ecal_CellSizeY"/>
-    <constant name="Ecal_z_position"         value="0*mm"/>
-    <constant name="Ecal_WThickness"         value="3.5*mm"/>
-    <constant name="Ecal_CFThickness"        value="1.5*mm"/>
-    <constant name="Ecal_KaptonThickness"    value="0.1*mm"/>
-    <constant name="Ecal_GlueThickness_kap"  value="0.1*mm"/>
-    <constant name="Ecal_GlueThickness_pcb"  value="0.1*mm"/>
-    <constant name="Ecal_WaferThickness650"  value="0.65*mm"/>
-    <constant name="Ecal_PcbThickness"       value="1.7*mm"/>
-    <constant name="Ecal_ChipThickness"      value="1.2*mm"/>
-    <constant name="Ecal_LayerDistance"      value="11.0*mm"/>
-    <constant name="Ecal_w_slab_gap650"      value="Ecal_LayerDistance-Ecal_CFThickness-Ecal_KaptonThickness-Ecal_GlueThickness_kap-Ecal_WaferThickness650-Ecal_GlueThickness_pcb-Ecal_KaptonThickness-Ecal_PcbThickness-Ecal_ChipThickness"/>
-    <constant name="Ecal_LayerThickness"     value="Ecal_WThickness+Ecal_LayerDistance"/>
-    <constant name="Ecal_dim_z"              value="Ecal_NLayers*Ecal_LayerThickness"/>
+    <!-- Input parameters -->
+    <constant name="SiPad_WThickness"        value="10*mm"/>
+    <constant name="SiTarget_WThickness"     value="3.5*mm"/>
+    <constant name="SiPad_dim_z"              value="200*mm"/>
+
+
+    <!-- Directly derived parameters -->
+    <constant name="SiTarget_dim_z"          value="1700*mm-SiPad_dim_z"/>
+    <constant name="SiTarget_z_position"     value="-SiTarget_dim_z/2.0-SiPad_dim_z"/>
+
+
+    <!-- ECAL geometry constants (from SiPad_commondefs.xml) -->
+    <constant name="SiPad_z_position"         value="-SiPad_dim_z/2.0"/>
+    <constant name="SiPad_NcellsX"            value="32"/> <!-- per sensor -->
+    <constant name="SiPad_NcellsY"            value="32"/> <!-- per sensor -->
+    <constant name="SiPad_CellSizeX"          value="5.625*mm"/>
+    <constant name="SiPad_CellSizeY"          value="5.625*mm"/>
+    <constant name="SiPad_dim_x"              value="3*SiPad_NcellsX*SiPad_CellSizeX"/> <!-- array of sensors -->
+    <constant name="SiPad_dim_y"              value="3*SiPad_NcellsY*SiPad_CellSizeY"/> <!-- array of sensors -->
+    <constant name="SiPad_CFThickness"        value="1.5*mm"/>
+    <constant name="SiPad_KaptonThickness"    value="0.1*mm"/>
+    <constant name="SiPad_GlueThickness_kap"  value="0.1*mm"/>
+    <constant name="SiPad_GlueThickness_pcb"  value="0.1*mm"/>
+    <constant name="SiPad_WaferThickness650"  value="0.65*mm"/>
+    <constant name="SiPad_PcbThickness"       value="1.7*mm"/>
+    <constant name="SiPad_ChipThickness"      value="1.2*mm"/>
+    <constant name="SiPad_layer_gap"         value="1*mm"/>
+    <constant name="SiPad_LayerThickness"      value="SiPad_WThickness+SiPad_layer_gap+SiPad_CFThickness+SiPad_KaptonThickness+SiPad_GlueThickness_kap+SiPad_WaferThickness650+SiPad_GlueThickness_pcb+SiPad_KaptonThickness+SiPad_PcbThickness+SiPad_ChipThickness"/>
+    <constant name="SiPad_NLayers"            value="floor(SiPad_dim_z/SiPad_LayerThickness)"/>
 
     <!-- SiTarget constants (from FairShip SiliconTarget_config.yaml) -->
-    <constant name="SiTarget_NLayers"       value="30"/>
-    <constant name="SiTarget_WThickness"     value="3.5*mm"/>
     <constant name="SiTarget_strip_pitch"    value="0.0755*mm"/>
-    <constant name="SiTarget_module_offset"  value="1*mm"/>
+    <constant name="SiTarget_module_offset"  value="1*mm"/> <!-- From W to Si planes -->
+    <constant name="SiTarget_spacing"         value="11.0*mm"/> <!-- Between W planes -->
     <constant name="SiTarget_sensor_thickness" value="0.3*mm"/>
-    <constant name="SiTarget_XY_plane_gap" value="5.5*mm"/>
-    <constant name="SiTarget_LayerDistance"      value="11.0*mm"/>
+    <constant name="SiTarget_XY_plane_gap" value="SiTarget_spacing-SiTarget_WThickness-2*SiTarget_module_offset-2*SiTarget_sensor_thickness"/>
     <constant name="SiTarget_env_width"      value="400*mm"/>
     <constant name="SiTarget_env_height"     value="400*mm"/>
-    <constant name="SiTarget_layer_gap"      value="SiTarget_LayerDistance-SiTarget_WThickness-2*SiTarget_sensor_thickness-SiTarget_XY_plane_gap-SiTarget_module_offset"/>
-    <constant name="SiTarget_LayerThickness"     value="SiTarget_LayerDistance"/>
-    <constant name="SiTarget_z_position"     value="-1*(Ecal_dim_z/2.0 + env_safety + SiTarget_LayerThickness*SiTarget_NLayers/2.0 +10*mm)"/>
+    <constant name="SiTarget_LayerThickness"      value="SiTarget_spacing"/>
     <!-- SiTarget sensor layout: 4 columns x 2 rows per plane (square sensors) -->
     <constant name="SiTarget_sensor_width"    value="99.25*mm"/>  <!-- active X -->
     <constant name="SiTarget_sensor_height"   value="199.5*mm"/>  <!-- active Y -->
     <constant name="SiTarget_sensor_gap"      value="1.0*mm"/>    <!-- gap between sensors -->
     <constant name="SiTarget_ncols"           value="4"/>
     <constant name="SiTarget_nrows"           value="2"/>
+    <constant name="SiTarget_NLayers"       value="floor(SiTarget_dim_z/SiTarget_LayerThickness)"/>
 
     <!-- MTC shared layer constants (hardcoded values from MTCDetector.h unless noted) -->
     <constant name="MTC_FeThickness"         value="50.0*mm"/>  <!-- outer iron absorber, PoC default -->
@@ -79,8 +84,8 @@
     <constant name="MTC_SciFiThickness"      value="1.35*mm"/>  <!-- fiberMatThick per plane -->
     <constant name="MTC_XY_plane_gap"        value="1.0*mm"/>   <!-- airGap between U and V planes -->
     <constant name="MTC_ScintThickness"      value="15.0*mm"/>
-    <constant name="MTC_layer_gap"           value="0.0*mm"/>
-    <constant name="MTC_NLayers"             value="20"/>
+    <constant name="MTC_layer_gap"           value="1.0*mm"/>
+    <constant name="MTC_NLayers"             value="14"/>
     <constant name="MTC_fiber_angle_deg"     value="5"/>        <!-- dimensionless degrees, converted in plugin -->
     <constant name="MTC_ScintCellSize"       value="50.0*mm"/>
     <constant name="MTC_SciFiChannelSize"    value="1.0*mm"/>   <!-- PoC placeholder, tune later -->
@@ -90,17 +95,17 @@
     <constant name="MTC_total_length"    value="MTC_NLayers * MTC_layer_thickness"/>
 
     <!-- Per-station transverse dimensions -->
-    <constant name="MTC40_env_width"     value="400.0*mm"/>
-    <constant name="MTC40_env_height"    value="400.0*mm"/>
-    <constant name="MTC50_env_width"     value="500.0*mm"/>
-    <constant name="MTC50_env_height"    value="500.0*mm"/>
+    <constant name="MTC40_env_width"     value="600.0*mm"/>
+    <constant name="MTC40_env_height"    value="600.0*mm"/>
+    <constant name="MTC50_env_width"     value="600.0*mm"/>
+    <constant name="MTC50_env_height"    value="600.0*mm"/>
     <constant name="MTC60_env_width"     value="600.0*mm"/>
     <constant name="MTC60_env_height"    value="600.0*mm"/>
 
     <!-- Z centres: gap of 600 mm after SiPad downstream face, stations back-to-back.
          MTC_inter_station_gap avoids the 0.2 mm envelope overlap (2 × 0.1 mm plugin safety). -->
     <constant name="MTC_inter_station_gap" value="1.0*mm"/>
-    <constant name="MTC40_z_position"    value="Ecal_dim_z/2.0 + 100.0*mm + MTC_total_length/2.0"/>
+    <constant name="MTC40_z_position"    value="MTC_total_length/2.0 + MTC_inter_station_gap"/>
     <constant name="MTC50_z_position"    value="MTC40_z_position + MTC_total_length + MTC_inter_station_gap"/>
     <constant name="MTC60_z_position"    value="MTC50_z_position + MTC_total_length + MTC_inter_station_gap"/>
 
@@ -129,10 +134,10 @@
   <readouts>
     <readout name="SiPadHits">
       <segmentation type="CartesianGridXY"
-                    grid_size_x="Ecal_CellSizeX"
-                    grid_size_y="Ecal_CellSizeY"
-                    offset_x="-(Ecal_dim_x/2.0)+0.001*mm" 
-                    offset_y="-(Ecal_dim_y/2.0)+0.001*mm"/>
+                    grid_size_x="SiPad_CellSizeX"
+                    grid_size_y="SiPad_CellSizeY"
+                    offset_x="-(Ecal_dim_x-Ecal_CellSizeX)/2.0" 
+                    offset_y="-(Ecal_dim_y-Ecal_CellSizeY)/2.0"/>
       <id>system:8,layer:8,slice:4,x:9,y:9</id>
     </readout>
 

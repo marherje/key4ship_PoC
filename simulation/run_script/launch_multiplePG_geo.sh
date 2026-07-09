@@ -11,7 +11,6 @@
 # via config.py --output (validated, SND_compact.xml untouched). Output files
 # are tagged with the geometry: data/output_geo<X>_<label>.edm4hep.root
 
-set -e
 
 if [ $# -ne 1 ]; then
     echo "Usage: $0 <A|B>"

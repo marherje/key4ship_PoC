@@ -27,11 +27,37 @@ _color_refs = []
 ROOT.gROOT.ProcessLine("""
 namespace SNDEve {
     std::vector<float> gX, gY, gZ, gE;
-    std::vector<int>   gSrc, gPlane;
+    std::vector<int>   gSrc, gPlane, gOrig;
     std::vector<float> gTsX, gTsY, gTsZ, gTsLoc0, gTsTilt;
     std::vector<int>   gTsTrackId;
 }
 """)
+
+
+# ---------------------------------------------------------------------------
+# MC-origin PDG → (label, RGB) for colour-by-truth mode. Antiparticles share
+# their particle's colour (sign is dropped for the lookup). Unlisted PDGs fall
+# back to grey. Overridable from the JSON config via a top-level "mc_colors"
+# map of "<pdg>": [r,g,b] (use the absolute PDG value as the key).
+# ---------------------------------------------------------------------------
+PDG_INFO = {
+    11:   ("e",     (1.00, 0.20, 0.20)),   # electron/positron — red
+    13:   ("mu",    (0.20, 0.45, 1.00)),   # muon — blue
+    211:  ("pi",    (0.20, 0.85, 0.30)),   # charged pion — green
+    2212: ("p",     (1.00, 0.65, 0.10)),   # proton — orange
+    2112: ("n",     (0.60, 0.60, 0.60)),   # neutron — grey
+    22:   ("gamma", (1.00, 0.90, 0.30)),   # photon — yellow
+    321:  ("K",     (0.75, 0.30, 0.90)),   # charged kaon — purple
+}
+PDG_FALLBACK = ("other", (0.55, 0.55, 0.55))
+
+
+def pdg_label_rgb(pdg, overrides=None):
+    """Return (label, (r,g,b)) for an MC-origin PDG (sign-independent)."""
+    key = abs(int(pdg))
+    if overrides and key in overrides:
+        return (f"pdg{key}", tuple(overrides[key]))
+    return PDG_INFO.get(key, PDG_FALLBACK)
 
 
 # ---------------------------------------------------------------------------
@@ -90,10 +116,14 @@ def read_hits(hits_file, ntuple_name, window_id, filter_dict=None, energy_field=
             filter_decls  += f'auto vflt_{field} = reader->GetView<int>("{field}"); '
             filter_checks += f'if ((int)vflt_{field}(i) != {val}) continue; '
 
+    # origin_pdg is read per hit (MC-truth origin, added by EDM4HEP2RNTuple).
+    # It is read with its own try so displays still work on older ShipHits.root
+    # files that predate the field (origin falls back to 0 there).
     ROOT.gROOT.ProcessLine(f"""
     {{
         SNDEve::gX.clear(); SNDEve::gY.clear(); SNDEve::gZ.clear();
         SNDEve::gE.clear(); SNDEve::gSrc.clear(); SNDEve::gPlane.clear();
+        SNDEve::gOrig.clear();
         try {{
             auto reader = ROOT::RNTupleReader::Open("{ntuple_name}", "{hits_file}");
             auto vwin = reader->GetView<int>("window_id");
@@ -102,30 +132,43 @@ def read_hits(hits_file, ntuple_name, window_id, filter_dict=None, energy_field=
             auto vz   = reader->GetView<float>("z");
             auto vE   = reader->GetView<float>("{energy_field}");
             auto vsrc = reader->GetView<int>("source_id");
+            const bool hasOrig =
+                reader->GetDescriptor().FindFieldId("origin_pdg")
+                    != ROOT::kInvalidDescriptorId;
+            const bool hasPlane =
+                reader->GetDescriptor().FindFieldId("plane")
+                    != ROOT::kInvalidDescriptorId;
             {filter_decls}
-            try {{
+            for (auto i : reader->GetEntryRange()) {{
+                if ((int)vwin(i) != {window_id}) continue;
+                {filter_checks}
+                SNDEve::gX.push_back(vx(i));
+                SNDEve::gY.push_back(vy(i));
+                SNDEve::gZ.push_back(vz(i));
+                SNDEve::gE.push_back(vE(i));
+                SNDEve::gSrc.push_back(vsrc(i));
+            }}
+            if (hasPlane) {{
                 auto vplane = reader->GetView<int>("plane");
                 for (auto i : reader->GetEntryRange()) {{
                     if ((int)vwin(i) != {window_id}) continue;
                     {filter_checks}
-                    SNDEve::gX.push_back(vx(i));
-                    SNDEve::gY.push_back(vy(i));
-                    SNDEve::gZ.push_back(vz(i));
-                    SNDEve::gE.push_back(vE(i));
-                    SNDEve::gSrc.push_back(vsrc(i));
                     SNDEve::gPlane.push_back(vplane(i));
                 }}
-            }} catch (...) {{
+            }} else {{
+                for (std::size_t k = 0; k < SNDEve::gX.size(); ++k)
+                    SNDEve::gPlane.push_back(-1);
+            }}
+            if (hasOrig) {{
+                auto vorig = reader->GetView<int>("origin_pdg");
                 for (auto i : reader->GetEntryRange()) {{
                     if ((int)vwin(i) != {window_id}) continue;
                     {filter_checks}
-                    SNDEve::gX.push_back(vx(i));
-                    SNDEve::gY.push_back(vy(i));
-                    SNDEve::gZ.push_back(vz(i));
-                    SNDEve::gE.push_back(vE(i));
-                    SNDEve::gSrc.push_back(vsrc(i));
-                    SNDEve::gPlane.push_back(-1);
+                    SNDEve::gOrig.push_back(vorig(i));
                 }}
+            }} else {{
+                for (std::size_t k = 0; k < SNDEve::gX.size(); ++k)
+                    SNDEve::gOrig.push_back(0);
             }}
         }} catch (...) {{
             printf("[reader] RNTuple '{ntuple_name}' not found or error.\\n");
@@ -142,7 +185,10 @@ def read_hits(hits_file, ntuple_name, window_id, filter_dict=None, energy_field=
     Es     = [ROOT.SNDEve.gE[i]     for i in range(n)]
     srcs   = [ROOT.SNDEve.gSrc[i]   for i in range(n)]
     planes = [ROOT.SNDEve.gPlane[i] for i in range(n)]
-    return xs, ys, zs, Es, srcs, planes
+    origins = [ROOT.SNDEve.gOrig[i] for i in range(ROOT.SNDEve.gOrig.size())]
+    if len(origins) != n:
+        origins = [0] * n
+    return xs, ys, zs, Es, srcs, planes, origins
 
 
 # ---------------------------------------------------------------------------
@@ -169,9 +215,24 @@ def build_geometry(eve, config):
 # ---------------------------------------------------------------------------
 # BUILD HITS from config
 # ---------------------------------------------------------------------------
-def build_hits(eve, hits_file, window_id, config):
+def build_hits(eve, hits_file, window_id, config, color_by="detector"):
     hits_root = ROOT.TEveElementList(f"Hits window {window_id}")
     mm2cm = 0.1
+
+    # Optional per-PDG colour overrides from the config ("mc_colors": {"13":[r,g,b]}).
+    mc_overrides = {int(k): v for k, v in config.get("mc_colors", {}).items()}
+    # Cache one ROOT colour index per |PDG| so all detectors share it (and the
+    # colour reads as a legend across the whole event).
+    pdg_color_cache = {}
+
+    def color_for_pdg(pdg):
+        key = abs(int(pdg))
+        if key not in pdg_color_cache:
+            _, (r, g, b) = pdg_label_rgb(pdg, mc_overrides)
+            pdg_color_cache[key] = rgb_to_root_color(r, g, b)
+        return pdg_color_cache[key]
+
+    seen_pdgs = {}  # |pdg| -> label, for the legend printout
 
     for det in config["detectors"]:
         det_name   = det["name"]
@@ -185,7 +246,7 @@ def build_hits(eve, hits_file, window_id, config):
         if len(layers_z) == 0: continue
         stereo_deg = det.get("stereo_deg", 0.0)
 
-        xs, ys, zs, Es, srcs, planes = read_hits(
+        xs, ys, zs, Es, srcs, planes, origins = read_hits(
             hits_file, ntuple, window_id, filter_dict=filter_d,
             energy_field=det.get("energy_field", "edep"))
 
@@ -195,12 +256,26 @@ def build_hits(eve, hits_file, window_id, config):
 
         print(f"[Hits] {det_name}: {len(xs)} hits")
 
-        # Color all hits of this detector using the color from JSON config
+        # Detector-uniform colour (used when color_by != "mc")
         r, g, b = det["color"]
         det_color = rgb_to_root_color(r, g, b)
 
         det_list = ROOT.TEveElementList(det_name)
-        grp = ROOT.TEveElementList(f"{det_name} hits")
+        # In MC mode, hits are grouped per origin PDG so each particle type is a
+        # separate, toggleable group in the Eve browser (that tree IS the legend).
+        mc_groups = {}  # |pdg| -> TEveElementList
+
+        def group_for(pdg):
+            key = abs(int(pdg))
+            if key not in mc_groups:
+                label, _ = pdg_label_rgb(pdg, mc_overrides)
+                seen_pdgs[key] = label
+                grp = ROOT.TEveElementList(f"{det_name} {label} ({pdg})")
+                mc_groups[key] = grp
+                det_list.AddElement(grp)
+            return mc_groups[key]
+
+        flat_grp = ROOT.TEveElementList(f"{det_name} hits")
 
         for i in range(len(xs)):
             xc = xs[i] * mm2cm
@@ -212,16 +287,30 @@ def build_hits(eve, hits_file, window_id, config):
             if not (z_min <= zc <= z_max):
                 continue
             snap_z = nearest_plane(zc, layers_z)
+            if color_by == "mc":
+                pdg   = origins[i] if i < len(origins) else 0
+                color = color_for_pdg(pdg)
+                target = group_for(pdg)
+            else:
+                color  = det_color
+                target = flat_grp
             gs = make_box(f"{det_name}_hit_{i}",
                           dx, dy, dz,
                           xc, yc, snap_z,
-                          det_color, transparency=0,
+                          color, transparency=0,
                           stereo_deg=stereo_deg)
-            grp.AddElement(gs)
+            target.AddElement(gs)
 
-        det_list.AddElement(grp)
+        if color_by != "mc":
+            det_list.AddElement(flat_grp)
         print(f"[Hits]   {det_name}: {len(xs)} hits")
         hits_root.AddElement(det_list)
+
+    if color_by == "mc" and seen_pdgs:
+        print("[Hits] MC-origin legend (colour by primary particle):")
+        for key, label in sorted(seen_pdgs.items()):
+            _, (r, g, b) = pdg_label_rgb(key, mc_overrides)
+            print(f"[Hits]   |PDG|={key:<5d} {label:<6s} rgb=({r:.2f},{g:.2f},{b:.2f})")
 
     eve.GetEventScene().AddElement(hits_root)
 
@@ -535,6 +624,11 @@ def main():
                         help="Path to DD4hep compact XML for layer z-extraction")
     parser.add_argument("--window", type=int, default=0,
                         help="Window/event index")
+    parser.add_argument("--color-by", choices=["detector", "mc"],
+                        default="detector",
+                        help="Hit colouring: 'detector' (one colour per "
+                             "detector, default) or 'mc' (one colour per MC "
+                             "origin particle type, read from origin_pdg).")
     args = parser.parse_args()
 
     if not os.path.exists(args.config):
@@ -562,7 +656,7 @@ def main():
     viewer.AddScene(eve.GetEventScene())
 
     build_geometry(eve, config)
-    build_hits(eve, args.hits, args.window, config)
+    build_hits(eve, args.hits, args.window, config, color_by=args.color_by)
     if track_data:
         draw_tracks(eve, track_data)
 
