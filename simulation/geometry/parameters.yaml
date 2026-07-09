@@ -17,11 +17,13 @@
 
 sitarget:
   n_layers: 30
-  z_position: auto
+  z_position: -157.5   # centre [mm]; dragged +90 with the SiPad (keeps the 10 mm
+                       # SiTarget->SiPad gap). Default `auto` would be -247.5.
 
 sipad:            # ECAL silicon-pad calorimeter
   n_layers: 10
-  z_position: auto
+  z_position: 90.0     # centre [mm]; back face at 162.5 -> 10 mm before the MTC
+                       # front (172.5). Default `auto` would be 0 (100 mm gap).
 
 mtc:
   n_layers: 20    # per station — the 3 stations share the layer template

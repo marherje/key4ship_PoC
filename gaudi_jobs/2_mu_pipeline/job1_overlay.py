@@ -8,8 +8,8 @@ from Configurables import EventOverlay
 
 overlay = EventOverlay("EventOverlay")
 overlay.InputFiles = [
-    "../../simulation/run_script/data/output_mu-_xyz_1_1_-1000_dir_0_0_1_E50.edm4hep.root",
-    "../../simulation/run_script/data/output_mu-_xyz_82.5_82.5_-1000_dir_0_0_1_E50.edm4hep.root"
+    "../../simulation/run_script/data/output_mu-_xyz_5_1_-1000_dir_0_0_1_E50.edm4hep.root",
+    "../../simulation/run_script/data/output_mu-_xyz_82.5_-82.5_-1000_dir_0_0_1_E50.edm4hep.root"
 ]
 overlay.SourceIDs           = [1, 2]
 overlay.CollectionsSiTarget = ['SiTargetHits', 'SiTargetHits']
