@@ -3,7 +3,18 @@
 
   <type_flags type="DetType_TRACKER + DetType_BARREL + DetType_STRIP"/>
 
-  <!-- Layer template shared by all three stations -->
+  <!-- Layer template shared by all three stations. EVERY material="Iron"
+       slice (the outer absorber and both inner slices) is replaced by the
+       plugin with a Steel container + centred Iron core of width
+       iron_width when the station's iron_width is smaller than its
+       env_width (MTC40/MTC50).
+
+       The slice thicknesses here must sum to MTC_layer_thickness: the
+       plugin derives each station's length from the slices, while the
+       station z_positions are derived from MTC_layer_thickness in
+       SND_compact.xml. The trailing Air slice carries MTC_layer_gap so
+       both agree - without it the stations come out 1 mm per layer short
+       and the inter-station gap silently grows. -->
   <layer repeat="MTC_NLayers">
     <slice material="Iron"         thickness="MTC_FeThickness"        sensitive="false" vis="TungstenVis"/>
     <slice material="Iron"         thickness="MTC_InnerIronThickness"  sensitive="false" vis="TungstenVis"/>
@@ -12,17 +23,21 @@
     <slice material="Scintillator"      thickness="MTC_SciFiThickness"      sensitive="true"  plane="1" vis="SiVis"/>
     <slice material="Iron"         thickness="MTC_InnerIronThickness"  sensitive="false" vis="TungstenVis"/>
     <slice material="Scintillator" thickness="MTC_ScintThickness"      sensitive="true"  plane="2" vis="SiVis"/>
+    <slice material="Air"          thickness="MTC_layer_gap"           sensitive="false" vis="AirVis"/>
   </layer>
 
   <!-- Per-station transverse dimensions and Z position -->
   <station name="MTC40" station_id="0"
            env_width="MTC40_env_width" env_height="MTC40_env_height"
+           iron_width="MTC40_iron_width"
            z_position="MTC40_z_position" fiber_angle="MTC_fiber_angle_deg"/>
   <station name="MTC50" station_id="1"
            env_width="MTC50_env_width" env_height="MTC50_env_height"
+           iron_width="MTC50_iron_width"
            z_position="MTC50_z_position" fiber_angle="MTC_fiber_angle_deg"/>
   <station name="MTC60" station_id="2"
            env_width="MTC60_env_width" env_height="MTC60_env_height"
+           iron_width="MTC60_iron_width"
            z_position="MTC60_z_position" fiber_angle="MTC_fiber_angle_deg"/>
 
 </detector>

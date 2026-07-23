@@ -46,4 +46,39 @@
     <fraction n="0.085" ref="H"/>
   </material>
 
+  <!-- Nuclear emulsion (FairShip media.geo 'NuclearEmulsion', rho=2.90 g/cm3).
+       FairShip's raw mass fractions sum to ~1.222; normalized here to 1. -->
+  <material name="NuclearEmulsion" state="solid">
+    <D unit="g/cm3" value="2.90"/>
+    <fraction n="0.36576" ref="Ag"/>
+    <fraction n="0.27003" ref="Br"/>
+    <fraction n="0.18247" ref="C"/>
+    <fraction n="0.07021" ref="O"/>
+    <fraction n="0.06710" ref="N"/>
+    <fraction n="0.02594" ref="H"/>
+    <fraction n="0.01293" ref="I"/>
+    <fraction n="0.00434" ref="S"/>
+    <fraction n="0.00074" ref="Si"/>
+    <fraction n="0.00041" ref="Na"/>
+    <fraction n="0.00008" ref="Sr"/>
+  </material>
+
+  <!-- Emulsion film plastic base (FairShip 'PlasticBase') -->
+  <material name="PlasticBase" state="solid">
+    <D unit="g/cm3" value="1.28"/>
+    <fraction n="0.5075" ref="O"/>
+    <fraction n="0.4286" ref="C"/>
+    <fraction n="0.0639" ref="H"/>
+  </material>
+
+  <!-- Non-magnetic austenitic stainless steel (AISI 304) for the MTC
+       absorber filler around the magnetic iron core -->
+  <material name="Steel" state="solid">
+    <D unit="g/cm3" value="8.02"/>
+    <fraction n="0.70" ref="Fe"/>
+    <fraction n="0.19" ref="Cr"/>
+    <fraction n="0.09" ref="Ni"/>
+    <fraction n="0.02" ref="Mn"/>
+  </material>
+
 </materials>

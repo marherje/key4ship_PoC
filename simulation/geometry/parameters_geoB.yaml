@@ -1,5 +1,7 @@
 # Geometry variant geoB: SiTarget 20 + SiPad 20 + MTC (20+20+20)
 # Apply with:  python3 config.py --params parameters_geoB.yaml --output SND_compact_geoB.xml
+# NOTE: sitarget.n_layers / sipad.n_layers are informational only (not
+# patched); those layer counts are now derived in the XML. See parameters.yaml.
 sitarget:
   n_layers: 20
   z_position: auto

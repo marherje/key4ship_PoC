@@ -25,53 +25,82 @@
     <constant name="world_x"    value="world_side"/>
     <constant name="world_y"    value="world_side"/>
     <constant name="world_z"    value="world_side"/>
+    <constant name="env_safety"               value="0.001*mm"/>
 
     <!-- Required by DD4hep tracking region -->
     <constant name="tracker_region_rmax" value="0*mm"/>
     <constant name="tracker_region_zmax" value="0*mm"/>
 
-    <!-- ECAL geometry constants (from ECAL_commondefs.xml) -->
-    <constant name="env_safety"              value="0.001*mm"/>
-    <constant name="Ecal_NLayers"            value="10"/>
-    <constant name="Ecal_NcellsX"            value="32"/>
-    <constant name="Ecal_NcellsY"            value="32"/>
-    <constant name="Ecal_CellSizeX"          value="5.5*mm"/>
-    <constant name="Ecal_CellSizeY"          value="5.5*mm"/>
-    <constant name="Ecal_dim_x"              value="3*Ecal_NcellsX*Ecal_CellSizeX"/>
-    <constant name="Ecal_dim_y"              value="3*Ecal_NcellsY*Ecal_CellSizeY"/>
-    <constant name="Ecal_z_position"         value="0*mm"/>
-    <constant name="Ecal_WThickness"         value="10*mm"/>
-    <constant name="Ecal_CFThickness"        value="1.5*mm"/>
-    <constant name="Ecal_KaptonThickness"    value="0.1*mm"/>
-    <constant name="Ecal_GlueThickness_kap"  value="0.1*mm"/>
-    <constant name="Ecal_GlueThickness_pcb"  value="0.1*mm"/>
-    <constant name="Ecal_WaferThickness650"  value="0.65*mm"/>
-    <constant name="Ecal_PcbThickness"       value="1.7*mm"/>
-    <constant name="Ecal_ChipThickness"      value="1.2*mm"/>
-    <constant name="Ecal_LayerDistance"      value="11.0*mm"/>
-    <constant name="Ecal_w_slab_gap650"      value="Ecal_LayerDistance-Ecal_CFThickness-Ecal_KaptonThickness-Ecal_GlueThickness_kap-Ecal_WaferThickness650-Ecal_GlueThickness_pcb-Ecal_KaptonThickness-Ecal_PcbThickness-Ecal_ChipThickness"/>
-    <constant name="Ecal_LayerThickness"     value="Ecal_WThickness+Ecal_LayerDistance"/>
-    <constant name="Ecal_dim_z"              value="Ecal_NLayers*Ecal_LayerThickness"/>
+    <!-- Input parameters -->
+    <constant name="SiPad_WThickness"        value="10*mm"/>
+    <constant name="SiTarget_WThickness"     value="3.5*mm"/>
+    <constant name="SiPad_dim_z"              value="200*mm"/>
+
+
+    <!-- Directly derived parameters -->
+    <constant name="SiTarget_dim_z"          value="1502*mm-SiPad_dim_z"/>
+    <constant name="SiTarget_z_position"     value="-SiTarget_dim_z/2.0-SiPad_dim_z"/>
+
+    <!-- EmulsionTarget (passive; FairShip SND default design, Target.cxx) -->
+    <constant name="EmTgt_env_x"          value="551.4*mm"/>
+    <constant name="EmTgt_env_y"          value="551.4*mm"/>
+    <constant name="EmTgt_env_z"          value="442.275*mm"/>
+    <constant name="EmTgt_brick_x"        value="400*mm"/>
+    <constant name="EmTgt_brick_y"        value="400*mm"/>
+    <constant name="EmTgt_brick_z"        value="47.655*mm"/>
+    <!-- Target-tracker slot thickness (FairShip TTZ = 2*0.55 + 2*0.145 + 2.01 cm).
+         The trackers themselves are NOT ported, so these 6 slots are empty air:
+         env_z = 5*brick_z + 6*TT_gap = 5*47.655 + 6*34 = 442.275 mm, of which only
+         238.275 mm is brick. The envelope is deliberately kept at FairShip's value
+         so the trackers can be dropped in later - it is not oversized by mistake. -->
+    <constant name="EmTgt_TT_gap"         value="34*mm"/>
+    <constant name="EmTgt_n_walls"        value="5"/>
+    <constant name="EmTgt_n_plates"       value="36"/>
+    <constant name="EmTgt_W_thickness"    value="1.0*mm"/>
+    <constant name="EmTgt_Em_thickness"   value="0.070*mm"/>
+    <constant name="EmTgt_Base_thickness" value="0.175*mm"/>
+    <constant name="EmTgt_clearance"      value="1.0*mm"/>
+    <!-- Rear face flush against the SiTarget front face (-1502 mm) minus
+         clearance; centre = -1724.1375 mm, span -1945.275 .. -1503.0 mm -->
+    <constant name="EmTgt_z_position"
+       value="SiTarget_z_position - SiTarget_dim_z/2.0 - EmTgt_clearance - EmTgt_env_z/2.0"/>
+
+
+    <!-- ECAL geometry constants (from SiPad_commondefs.xml) -->
+    <constant name="SiPad_z_position"         value="-SiPad_dim_z/2.0"/>
+    <constant name="SiPad_NcellsX"            value="32"/> <!-- per sensor -->
+    <constant name="SiPad_NcellsY"            value="32"/> <!-- per sensor -->
+    <constant name="SiPad_CellSizeX"          value="5.625*mm"/>
+    <constant name="SiPad_CellSizeY"          value="5.625*mm"/>
+    <constant name="SiPad_dim_x"              value="3*SiPad_NcellsX*SiPad_CellSizeX"/> <!-- array of sensors -->
+    <constant name="SiPad_dim_y"              value="3*SiPad_NcellsY*SiPad_CellSizeY"/> <!-- array of sensors -->
+    <constant name="SiPad_CFThickness"        value="1.5*mm"/>
+    <constant name="SiPad_KaptonThickness"    value="0.1*mm"/>
+    <constant name="SiPad_GlueThickness_kap"  value="0.1*mm"/>
+    <constant name="SiPad_GlueThickness_pcb"  value="0.1*mm"/>
+    <constant name="SiPad_WaferThickness650"  value="0.65*mm"/>
+    <constant name="SiPad_PcbThickness"       value="1.7*mm"/>
+    <constant name="SiPad_ChipThickness"      value="1.2*mm"/>
+    <constant name="SiPad_layer_gap"         value="1*mm"/>
+    <constant name="SiPad_LayerThickness"      value="SiPad_WThickness+SiPad_layer_gap+SiPad_CFThickness+SiPad_KaptonThickness+SiPad_GlueThickness_kap+SiPad_WaferThickness650+SiPad_GlueThickness_pcb+SiPad_KaptonThickness+SiPad_PcbThickness+SiPad_ChipThickness"/>
+    <constant name="SiPad_NLayers"            value="floor(SiPad_dim_z/SiPad_LayerThickness)"/>
 
     <!-- SiTarget constants (from FairShip SiliconTarget_config.yaml) -->
-    <constant name="SiTarget_NLayers"       value="120"/>
-    <constant name="SiTarget_WThickness"     value="3.5*mm"/>
     <constant name="SiTarget_strip_pitch"    value="0.0755*mm"/>
-    <constant name="SiTarget_module_offset"  value="1*mm"/>
+    <constant name="SiTarget_module_offset"  value="1*mm"/> <!-- From W to Si planes -->
+    <constant name="SiTarget_spacing"         value="11.0*mm"/> <!-- Between W planes -->
     <constant name="SiTarget_sensor_thickness" value="0.3*mm"/>
-    <constant name="SiTarget_XY_plane_gap" value="5.5*mm"/>
-    <constant name="SiTarget_LayerDistance"      value="11.0*mm"/>
+    <constant name="SiTarget_XY_plane_gap" value="SiTarget_spacing-SiTarget_WThickness-2*SiTarget_module_offset-2*SiTarget_sensor_thickness"/>
     <constant name="SiTarget_env_width"      value="400*mm"/>
     <constant name="SiTarget_env_height"     value="400*mm"/>
-    <constant name="SiTarget_layer_gap"      value="SiTarget_LayerDistance-SiTarget_WThickness-2*SiTarget_sensor_thickness-SiTarget_XY_plane_gap-SiTarget_module_offset"/>
-    <constant name="SiTarget_LayerThickness"     value="SiTarget_LayerDistance"/>
-    <constant name="SiTarget_z_position"     value="-1*(Ecal_dim_z/2.0 + env_safety + SiTarget_LayerThickness*SiTarget_NLayers/2.0 +10*mm)"/>
+    <constant name="SiTarget_LayerThickness"      value="SiTarget_spacing"/>
     <!-- SiTarget sensor layout: 4 columns x 2 rows per plane (square sensors) -->
     <constant name="SiTarget_sensor_width"    value="99.25*mm"/>  <!-- active X -->
     <constant name="SiTarget_sensor_height"   value="199.5*mm"/>  <!-- active Y -->
     <constant name="SiTarget_sensor_gap"      value="1.0*mm"/>    <!-- gap between sensors -->
     <constant name="SiTarget_ncols"           value="4"/>
     <constant name="SiTarget_nrows"           value="2"/>
+    <constant name="SiTarget_NLayers"       value="floor(SiTarget_dim_z/SiTarget_LayerThickness)"/>
 
     <!-- MTC shared layer constants (hardcoded values from MTCDetector.h unless noted) -->
     <constant name="MTC_FeThickness"         value="50.0*mm"/>  <!-- outer iron absorber, PoC default -->
@@ -90,17 +119,24 @@
     <constant name="MTC_total_length"    value="MTC_NLayers * MTC_layer_thickness"/>
 
     <!-- Per-station transverse dimensions -->
-    <constant name="MTC40_env_width"     value="400.0*mm"/>
-    <constant name="MTC40_env_height"    value="400.0*mm"/>
-    <constant name="MTC50_env_width"     value="500.0*mm"/>
-    <constant name="MTC50_env_height"    value="500.0*mm"/>
+    <constant name="MTC40_env_width"     value="600.0*mm"/>
+    <constant name="MTC40_env_height"    value="600.0*mm"/>
+    <constant name="MTC50_env_width"     value="600.0*mm"/>
+    <constant name="MTC50_env_height"    value="600.0*mm"/>
     <constant name="MTC60_env_width"     value="600.0*mm"/>
     <constant name="MTC60_env_height"    value="600.0*mm"/>
 
+    <!-- Width of the magnetic iron core inside the 50 mm absorber (slice 0);
+         the remaining transverse footprint is filled with (non-magnetic) Steel -->
+    <constant name="MTC40_iron_width" value="400.0*mm"/>
+    <constant name="MTC50_iron_width" value="500.0*mm"/>
+    <constant name="MTC60_iron_width" value="600.0*mm"/>
+
     <!-- Z centres: gap of 600 mm after SiPad downstream face, stations back-to-back.
-         MTC_inter_station_gap avoids the 0.2 mm envelope overlap (2 × 0.1 mm plugin safety). -->
+         MTC_inter_station_gap avoids the envelope overlap from the plugin's
+         (now correctly-converted, 0.001 mm) safety margin. -->
     <constant name="MTC_inter_station_gap" value="1.0*mm"/>
-    <constant name="MTC40_z_position"    value="Ecal_dim_z/2.0 + 100.0*mm + MTC_total_length/2.0"/>
+    <constant name="MTC40_z_position"    value="MTC_total_length/2.0 + MTC_inter_station_gap"/>
     <constant name="MTC50_z_position"    value="MTC40_z_position + MTC_total_length + MTC_inter_station_gap"/>
     <constant name="MTC60_z_position"    value="MTC50_z_position + MTC_total_length + MTC_inter_station_gap"/>
 
@@ -116,11 +152,17 @@
 
   <display>
     <vis name="Invisible"    alpha="0.0" r="0"   g="0"    b="0"    showDaughters="false" visible="false"/>
+    <!-- Container volumes (MTC station envelopes, layers): not drawn themselves
+         but their contents are. Without this entry the plugin's
+         setVisAttributes() call silently does nothing. -->
+    <vis name="InvisibleWithDaughters" alpha="0.0" r="0"   g="0"    b="0"    showDaughters="true"  visible="false"/>
+    <vis name="SteelVis"     alpha="1.0" r="0.15" g="0.75" b="0.35" showDaughters="true"  visible="true"/>
     <vis name="EcalVis"      alpha="0.1" r="0.7" g="0.7"  b="0.0"  showDaughters="true"  visible="false"/>
     <vis name="TungstenVis"  alpha="0.5" r="0.5" g="0.35" b="0.55" showDaughters="true"  visible="true"/>
     <vis name="AirVis"       alpha="0.01" r="1.0" g="1.0"  b="1.0"  showDaughters="true"  visible="false"/>
     <vis name="SiVis"        alpha="0.5" r="0.9" g="0.9"  b="0.9"  showDaughters="true"  visible="true"/>
-    <vis name="AlVis"        alpha="0.1" r="0.7" g="0.7"  b="0.7"  showDaughters="true"  visible="true"/>
+    <vis name="AlVis"        alpha="0.9" r="0.3" g="0.6"  b="0.9"  showDaughters="true"  visible="true"/>
+    <vis name="BaseVis"      alpha="0.3" r="0.9" g="0.8"  b="0.4"  showDaughters="true"  visible="true"/>
     <vis name="PCBVis"       alpha="0.1" r="0.0" g="0.8"  b="0.0"  showDaughters="true"  visible="true"/>
     <vis name="CFVis"        alpha="0.1" r="0.0" g="0.0"  b="0.0"  showDaughters="true"  visible="false"/>
     <vis name="CuVis"        alpha="0.1" r="1.0" g="0.5"  b="0.0"  showDaughters="true"  visible="false"/>
@@ -129,10 +171,10 @@
   <readouts>
     <readout name="SiPadHits">
       <segmentation type="CartesianGridXY"
-                    grid_size_x="Ecal_CellSizeX"
-                    grid_size_y="Ecal_CellSizeY"
-                    offset_x="-(Ecal_dim_x/2.0)+0.001*mm" 
-                    offset_y="-(Ecal_dim_y/2.0)+0.001*mm"/>
+                    grid_size_x="SiPad_CellSizeX"
+                    grid_size_y="SiPad_CellSizeY"
+                    offset_x="-(SiPad_dim_x-SiPad_CellSizeX)/2.0" 
+                    offset_y="-(SiPad_dim_y-SiPad_CellSizeY)/2.0"/>
       <id>system:8,layer:8,slice:4,x:9,y:9</id>
     </readout>
 
@@ -186,6 +228,7 @@
 
   <detectors>
     <include ref="SiPadDetector.xml"/>
+    <include ref="EmulsionTarget.xml"/>
     <include ref="SiTarget.xml"/>
     <include ref="MTCDetector.xml"/>
   </detectors>

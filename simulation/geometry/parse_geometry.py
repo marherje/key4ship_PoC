@@ -56,6 +56,7 @@ class SNDGeometry:
             "tesla": 1.0,
             "deg": 1.0,
             "pi": math.pi,
+            "floor": math.floor,
         }
         todo = dict(raw)
         for _ in range(len(todo) + 1):
@@ -72,7 +73,7 @@ class SNDGeometry:
                     pass
             if not progress:
                 break
-        _units = {"mm", "cm", "m", "tesla", "deg", "pi"}
+        _units = {"mm", "cm", "m", "tesla", "deg", "pi", "floor"}
         return {k: v for k, v in ctx.items() if k not in _units}
 
     # ── raw access ──────────────────────────────────────────────────────────
@@ -115,15 +116,15 @@ class SNDGeometry:
 
     @property
     def ecal_cell_size_x(self) -> float:
-        return self._constants["Ecal_CellSizeX"]
+        return self._constants["SiPad_CellSizeX"]
 
     @property
     def ecal_cell_size_y(self) -> float:
-        return self._constants["Ecal_CellSizeY"]
+        return self._constants["SiPad_CellSizeY"]
 
     @property
     def ecal_dim_z(self) -> float:
-        return self._constants["Ecal_dim_z"]
+        return self._constants["SiPad_dim_z"]
 
     # ── MTC ─────────────────────────────────────────────────────────────────
 

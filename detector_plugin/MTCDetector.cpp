@@ -8,8 +8,10 @@
 //    | inner iron | scintillator
 //
 //  If the detector XML has a field_y attribute (e.g., 1.0*tesla),
-//  a uniform By field is added to the global DD4hep field for each
-//  outer iron absorber slab (slice 0, 50 mm thick per layer).
+//  a uniform By field is added to the global DD4hep field for every
+//  iron slice of every layer (the 50 mm outer absorber and both 3 mm
+//  inner slices). In split stations only the iron core is magnetised;
+//  the steel filler around it is not.
 //====================================================================
 #include "DD4hep/DetFactoryHelper.h"
 #include "DD4hep/FieldTypes.h"
@@ -22,7 +24,7 @@
 using namespace dd4hep;
 
 // ---------------------------------------------------------------------------
-// Field object: returns By only inside the registered outer iron slabs
+// Field object: returns By only inside the registered iron slabs
 // ---------------------------------------------------------------------------
 namespace {
   struct MTCIronField : public CartesianField::Object {
@@ -98,6 +100,12 @@ dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
     double      z0      = x_st.attr<double>(_Unicode(z_position));
     double      ang_deg = x_st.attr<double>(_Unicode(fiber_angle));
 
+    // Magnetic iron core width of the outer absorber (slice 0). Defaults to
+    // env_w (no split) when the station does not specify iron_width.
+    double iron_w = x_st.hasAttr(_Unicode(iron_width))
+                      ? x_st.attr<double>(_Unicode(iron_width)) : env_w;
+    bool   split  = (iron_w < env_w - 1e-6);
+
     // Para (parallelepiped) parameters for SciFi U/V slices.
     // alpha_para is the TGeoPara shear angle (degrees): encodes the stereo tilt
     // without rotating the volume, so the slice stays within the station envelope.
@@ -107,14 +115,17 @@ dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
     double scifi_dx   = env_w / 2.0 - (env_h / 2.0) * sin_a;             // half-width of SciFi slice
 
     dd4hep::printout(dd4hep::INFO, "MTCDetector",
-        "%s: env=(%.0f x %.0f mm) z0=%.1f mm fiber_angle=%.1f deg",
-        st_name.c_str(), env_w, env_h, z0, ang_deg);
+        "%s: env=(%.0f x %.0f mm) iron core width=%.0f mm z0=%.1f mm "
+        "fiber_angle=%.1f deg",
+        st_name.c_str(), env_w / mm, env_h / mm, iron_w / mm, z0 / mm, ang_deg);
 
     // -- Build station envelope and place inside parent assembly -------------
-    const double safety = 0.1;  // mm
+    const double safety = 0.001 * mm;  // was a bare "0.1" (= 1 mm in DD4hep's
+                                        // internal cm-based units, not 0.1 mm
+                                        // as intended); now properly converted.
     Box    env_shape(env_w / 2.0 + safety, env_h / 2.0 + safety, total_z / 2.0 + safety);
     Volume env_vol(st_name + "_envelope", env_shape, mat_air);
-    env_vol.setVisAttributes(description, "InvisibleNoDaughters");
+    env_vol.setVisAttributes(description, "InvisibleWithDaughters");
 
     // Station envelope placed at its absolute Z inside the assembly (assembly is at origin).
     PlacedVolume env_pv = parent_asm.placeVolume(env_vol, Position(0.0, 0.0, z0));
@@ -167,16 +178,64 @@ dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
           if (is_sens && x_slice.hasAttr(_Unicode(plane)))
             plane_id = x_slice.attr<int>(_Unicode(plane));
 
-          // Slice 0 = outer iron absorber: register for magnetic field
-          if (slice_in_layer == 0 && bFieldY != 0.0) {
-            double slab_lo = z0 + cur_z;           // global Z start of outer iron
+          std::string slice_name   = layer_name + "_slice_" + std::to_string(slice_in_layer);
+          double      sl_center_z  = local_z + thick / 2.0;
+
+          // Every iron slice carries the field, not just the thick outer
+          // absorber. cur_z is the layer start and local_z the slice start
+          // relative to the layer centre, so the slice's global Z start is
+          // z0 + cur_z + layer_thick/2 + local_z (which reduces to
+          // z0 + cur_z for slice 0, as before).
+          if (mat_name == "Iron" && bFieldY != 0.0) {
+            double slab_lo = z0 + cur_z + layer_thick / 2.0 + local_z;
             double slab_hi = slab_lo + thick;       // global Z end
-            ironSlabs.push_back({slab_lo, slab_hi, env_w / 2.0 + 1.0, env_h / 2.0 + 1.0});
+            // Only the iron core is magnetised; the steel filler (when split)
+            // is non-magnetic, so the field slab's x half-extent shrinks to
+            // the iron core width.
+            double xhalf   = split ? iron_w / 2.0 : env_w / 2.0 + 1.0;
+            ironSlabs.push_back({slab_lo, slab_hi, xhalf, env_h / 2.0 + 1.0});
           }
 
-          std::string slice_name   = layer_name + "_slice_" + std::to_string(slice_in_layer);
+          // Every iron slice of a split station (outer 50 mm absorber AND the
+          // two inner 3 mm slices) is built as a centred Iron core of the
+          // station's iron_width flanked by two Steel fillers, all three
+          // placed side by side directly in the layer. They are siblings
+          // rather than a Steel mother with an Iron daughter so that every
+          // piece is a leaf volume: ROOT's default draw mode (visopt=1)
+          // renders leaves only, and a Steel container would be skipped,
+          // leaving the filler invisible in geoDisplay. The external
+          // dimensions and slice thicknesses are unchanged.
+          if (mat_name == "Iron" && split) {
+            Volume core_vol(slice_name,
+                            Box(iron_w / 2.0, env_h / 2.0, thick / 2.0),
+                            description.material("Iron"));
+            core_vol.setVisAttributes(description, "TungstenVis");
+
+            PlacedVolume sl_pv = layer_vol.placeVolume(core_vol,
+                                   Transform3D(Position(0.0, 0.0, sl_center_z)));
+            sl_pv.addPhysVolID("slice", slice_in_layer);
+
+            DetElement slice_de(layer_de, slice_name,
+                                layer_idx * 10 + slice_in_layer);
+            slice_de.setPlacement(sl_pv);
+
+            // Steel fillers: one per side, each (env_w - iron_w)/2 wide.
+            const double fill_w = (env_w - iron_w) / 2.0;
+            Volume fill_vol(slice_name + "_steel",
+                            Box(fill_w / 2.0, env_h / 2.0, thick / 2.0),
+                            description.material("Steel"));
+            fill_vol.setVisAttributes(description, "SteelVis");
+
+            const double fill_x = (iron_w + fill_w) / 2.0;
+            for (int side = -1; side <= 1; side += 2)
+              layer_vol.placeVolume(fill_vol,
+                Transform3D(Position(side * fill_x, 0.0, sl_center_z)));
+
+            local_z += thick;
+            continue;
+          }
+
           Material    mat          = description.material(mat_name);
-          double      sl_center_z  = local_z + thick / 2.0;
 
           // SciFi planes (plane 0 = U, plane 1 = V): use Para to encode the stereo
           // angle as a shear, avoiding envelope overflow from a pure Z-rotation.
@@ -219,7 +278,7 @@ dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
     }
   }
 
-  // -- Add magnetic field in outer iron slabs to the global DD4hep field ----
+  // -- Add magnetic field in the iron slabs to the global DD4hep field -----
   if (bFieldY != 0.0 && !ironSlabs.empty()) {
     auto* obj        = new MTCIronField();
     obj->field_type  = CartesianField::MAGNETIC;
@@ -231,7 +290,7 @@ dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
     description.field().add(cf);
 
     dd4hep::printout(dd4hep::INFO, "MTCDetector",
-        "%s: By=%.2f T magnetic field registered in %zu outer iron slabs",
+        "%s: By=%.2f T magnetic field registered in %zu iron slabs",
         name.c_str(), bFieldY / dd4hep::tesla, obj->m_slabs.size());
   }
 

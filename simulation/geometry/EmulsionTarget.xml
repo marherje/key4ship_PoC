@@ -1,0 +1,13 @@
+<detector name="EmulsionTarget" type="EmulsionTargetDetector"
+          vis="TungstenVis" id="4">
+  <!-- Passive detector: no readout, no type_flags, no sensitive slices -->
+  <parameters
+      env_width="EmTgt_env_x"  env_height="EmTgt_env_y"  env_length="EmTgt_env_z"
+      z_position="EmTgt_z_position"
+      brick_width="EmTgt_brick_x" brick_height="EmTgt_brick_y" brick_length="EmTgt_brick_z"
+      n_walls="EmTgt_n_walls"  tt_gap="EmTgt_TT_gap"
+      n_plates="EmTgt_n_plates"
+      tungsten_thickness="EmTgt_W_thickness"
+      emulsion_thickness="EmTgt_Em_thickness"
+      base_thickness="EmTgt_Base_thickness"/>
+</detector>

@@ -30,12 +30,13 @@ COMPACT = HERE / "SND_compact.xml"
 PARAMS = HERE / "parameters.yaml"
 
 # Canonical derived expressions used when a z_position is set to `auto`
-# (these are the original self-stacking definitions of SND_compact.xml).
+# (these are the current self-stacking definitions of SND_compact.xml; the
+# ECAL/SiPad and SiTarget names were updated when the ECAL detector was
+# renamed to SiPad and SiTarget_dim_z became derived from SiPad_dim_z).
 AUTO_EXPR = {
-    "SiTarget_z_position":
-        "-1*(Ecal_dim_z/2.0 + env_safety + SiTarget_LayerThickness*SiTarget_NLayers/2.0 +10*mm)",
-    "Ecal_z_position": "0*mm",
-    "MTC40_z_position": "Ecal_dim_z/2.0 + 100.0*mm + MTC_total_length/2.0",
+    "SiTarget_z_position": "-SiTarget_dim_z/2.0-SiPad_dim_z",
+    "SiPad_z_position": "-SiPad_dim_z/2.0",
+    "MTC40_z_position": "MTC_total_length/2.0 + MTC_inter_station_gap",
     "MTC50_z_position": "MTC40_z_position + MTC_total_length + MTC_inter_station_gap",
     "MTC60_z_position": "MTC50_z_position + MTC_total_length + MTC_inter_station_gap",
 }
@@ -49,14 +50,18 @@ def _zvalue(name, zcfg):
 
 
 def build_constant_map(params):
-    """Map <constant> name -> new value string from the YAML parameters."""
+    """Map <constant> name -> new value string from the YAML parameters.
+
+    NOTE: SiTarget_NLayers and SiPad_NLayers are no longer free parameters —
+    the live SND_compact.xml derives them as
+    floor(dim_z/LayerThickness), so they are not patched here (unlike
+    MTC_NLayers, which remains a plain input constant).
+    """
     consts = {
-        "SiTarget_NLayers": str(int(params["sitarget"]["n_layers"])),
-        "Ecal_NLayers":     str(int(params["sipad"]["n_layers"])),
-        "MTC_NLayers":      str(int(params["mtc"]["n_layers"])),
+        "MTC_NLayers": str(int(params["mtc"]["n_layers"])),
         "SiTarget_z_position": _zvalue("SiTarget_z_position",
                                        params["sitarget"].get("z_position")),
-        "Ecal_z_position":     _zvalue("Ecal_z_position",
+        "SiPad_z_position":    _zvalue("SiPad_z_position",
                                        params["sipad"].get("z_position")),
     }
     stations = params["mtc"].get("stations", {})
@@ -92,13 +97,17 @@ def summarize(compact_path):
     c = g._constants
 
     spans = []
-    st_half = c["SiTarget_LayerThickness"] * c["SiTarget_NLayers"] / 2.0
+    em_half = c["EmTgt_env_z"] / 2.0
+    spans.append(("EmulsionTarget",
+                  c["EmTgt_z_position"] - em_half,
+                  c["EmTgt_z_position"] + em_half))
+    st_half = c["SiTarget_dim_z"] / 2.0
     spans.append(("SiTarget (%d capas)" % int(c["SiTarget_NLayers"]),
                   c["SiTarget_z_position"] - st_half,
                   c["SiTarget_z_position"] + st_half))
-    spans.append(("SiPad/ECAL (%d capas)" % int(c["Ecal_NLayers"]),
-                  c["Ecal_z_position"] - c["Ecal_dim_z"] / 2.0,
-                  c["Ecal_z_position"] + c["Ecal_dim_z"] / 2.0))
+    spans.append(("SiPad (%d capas)" % int(c["SiPad_NLayers"]),
+                  c["SiPad_z_position"] - c["SiPad_dim_z"] / 2.0,
+                  c["SiPad_z_position"] + c["SiPad_dim_z"] / 2.0))
     for st in ("MTC40", "MTC50", "MTC60"):
         spans.append(("%s (%d capas)" % (st, int(c["MTC_NLayers"])),
                       c[f"{st}_z_position"] - c["MTC_total_length"] / 2.0,
@@ -109,9 +118,15 @@ def summarize(compact_path):
     for (na, _, hia), (nb, lob, _) in zip(spans, spans[1:]):
         if hia > lob:
             errors.append(f"SOLAPE: {na} termina en {hia:.1f} y {nb} empieza en {lob:.1f}")
+    # NOTE: the default particle gun (multiplePG_base.py) sits at z = -1000 mm,
+    # intentionally *inside* SiTarget's span; EmulsionTarget legitimately sits
+    # upstream of that, so this is only a warning (printed via `lines`), not a
+    # hard error that would block writing the XML.
     if spans[0][1] <= -1000.0:
-        errors.append(f"El primer detector empieza en {spans[0][1]:.1f} mm <= -1000 mm "
-                      "(posicion por defecto del gun); adelanta el gun o el detector.")
+        lines.append(f"  AVISO: el primer detector empieza en {spans[0][1]:.1f} mm "
+                     "<= -1000 mm (posicion por defecto del gun); esto es "
+                     "esperado si EmulsionTarget/SiTarget estan aguas arriba "
+                     "del gun por diseno.")
     return lines, errors
 
 

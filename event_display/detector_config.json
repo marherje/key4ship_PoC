@@ -21,7 +21,7 @@
       "ntuple": "SiPadMeas",
       "filter": {},
       "color": [1.0, 0.5, 0.0],
-      "voxel": {"x": 0.275, "y": 0.275, "z": 0.0325},
+      "voxel": {"x": 0.28125, "y": 0.28125, "z": 0.0325},
       "geo_extract": {"path_contains": "SiPad", "slice_index": 4}
     },
     {
@@ -30,7 +30,7 @@
       "filter": {"bf_plane": 0},
       "energy_field": "E",
       "color": [0.2, 0.8, 1.0],
-      "voxel": {"x": 0.05, "y": 20.0, "z": 0.0675},
+      "voxel": {"x": 0.05, "y": 30.0, "z": 0.0675},
       "stereo_deg": 5.0,
       "geo_extract": {"path_contains": "MTC40", "slice_index": 2}
     },
@@ -40,7 +40,7 @@
       "filter": {"bf_plane": 1},
       "energy_field": "E",
       "color": [0.0, 0.6, 1.0],
-      "voxel": {"x": 0.05, "y": 20.0, "z": 0.0675},
+      "voxel": {"x": 0.05, "y": 30.0, "z": 0.0675},
       "stereo_deg": -5.0,
       "geo_extract": {"path_contains": "MTC40", "slice_index": 4}
     },
@@ -59,7 +59,7 @@
       "filter": {"bf_plane": 0},
       "energy_field": "E",
       "color": [0.2, 0.8, 1.0],
-      "voxel": {"x": 0.05, "y": 25.0, "z": 0.0675},
+      "voxel": {"x": 0.05, "y": 30.0, "z": 0.0675},
       "stereo_deg": 5.0,
       "geo_extract": {"path_contains": "MTC50", "slice_index": 2}
     },
@@ -69,7 +69,7 @@
       "filter": {"bf_plane": 1},
       "energy_field": "E",
       "color": [0.0, 0.6, 1.0],
-      "voxel": {"x": 0.05, "y": 25.0, "z": 0.0675},
+      "voxel": {"x": 0.05, "y": 30.0, "z": 0.0675},
       "stereo_deg": -5.0,
       "geo_extract": {"path_contains": "MTC50", "slice_index": 4}
     },
@@ -116,29 +116,29 @@
     {
       "name": "SiTarget planes",
       "color": [0.2, 0.4, 0.9],
-      "transparency": 85,
+      "transparency": 93,
       "voxel": {"x": 20.0, "y": 20.0, "z": 0.015},
       "geo_extract": {"path_contains": "SiTarget", "slice_index": 0}
     },
     {
       "name": "SiPad planes",
       "color": [0.2, 0.7, 0.2],
-      "transparency": 85,
-      "voxel": {"x": 17.6, "y": 17.6, "z": 0.0325},
+      "transparency": 93,
+      "voxel": {"x": 27.0, "y": 27.0, "z": 0.0325},
       "geo_extract": {"path_contains": "SiPad", "slice_index": 0}
     },
     {
       "name": "MTC40 layers",
       "color": [0.6, 0.6, 0.6],
       "transparency": 85,
-      "voxel": {"x": 20.0, "y": 20.0, "z": 2.735},
+      "voxel": {"x": 30.0, "y": 30.0, "z": 2.735},
       "geo_extract": {"path_contains": "MTC40", "slice_index": 0}
     },
     {
       "name": "MTC50 layers",
       "color": [0.6, 0.6, 0.6],
       "transparency": 85,
-      "voxel": {"x": 25.0, "y": 25.0, "z": 2.735},
+      "voxel": {"x": 30.0, "y": 30.0, "z": 2.735},
       "geo_extract": {"path_contains": "MTC50", "slice_index": 0}
     },
     {
