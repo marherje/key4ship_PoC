@@ -46,13 +46,16 @@ dd4hep::Ref_t create_SiTarget(dd4hep::Detector& description,
   // Diagnostic: print actual values to verify DD4hep unit conversion
   dd4hep::printout(dd4hep::INFO, "SiTargetDetector",
       "env_w=%.3f env_h=%.3f sensor_w=%.3f sensor_h=%.3f gap=%.3f "
-      "(all in DD4hep internal units = mm)",
-      env_w, env_h, sensor_w, sensor_h, sensor_gap);
+      "(mm)",
+      env_w / mm, env_h / mm, sensor_w / mm, sensor_h / mm, sensor_gap / mm);
 
-  // Verify sensor array fits within envelope
+  // Verify sensor array fits within envelope. The nominal layout fills the
+  // envelope exactly (4*99.25 + 3*1 = 400 mm), so compare with a tolerance:
+  // a bare ">" fires on floating-point noise from the unit conversion.
+  const double fit_tol = 1e-6 * mm;
   double array_x = nCols * sensor_w + (nCols - 1) * sensor_gap;
   double array_y = nRows * sensor_h + (nRows - 1) * sensor_gap;
-  if (array_x > env_w || array_y > env_h) {
+  if (array_x > env_w + fit_tol || array_y > env_h + fit_tol) {
     dd4hep::printout(dd4hep::WARNING, "SiTargetDetector",
         "WARNING: sensor array (%.1f x %.1f) exceeds envelope (%.1f x %.1f)!",
         array_x, array_y, env_w, env_h);
@@ -77,7 +80,9 @@ dd4hep::Ref_t create_SiTarget(dd4hep::Detector& description,
   // Z=beam: envelope is thin along Z (beam), wide in X and Y (transverse).
   // Add a small safety margin so that daughter volumes do not touch the
   // envelope boundary exactly (TGeo flags exact-boundary as "outside").
-  const double safety = 0.1;  // mm
+  const double safety = 0.001 * mm;  // was a bare "0.1" (= 1 mm in DD4hep's
+                                      // internal cm-based units, not 0.1 mm
+                                      // as intended); now properly converted.
   Box    env_shape( env_w / 2.0 + safety, env_h / 2.0 + safety, total_z / 2.0 + safety);
   Volume env_vol(name + "_envelope", env_shape, mat_air);
   env_vol.setVisAttributes(description, "InvisibleNoDaughters");
@@ -170,7 +175,8 @@ dd4hep::Ref_t create_SiTarget(dd4hep::Detector& description,
           double sl_half_x = env_w / 2.0;
           double sl_half_y = env_h / 2.0;
 
-          if (total_x / 2.0 > sl_half_x || total_y / 2.0 > sl_half_y) {
+          if (total_x / 2.0 > sl_half_x + fit_tol ||
+              total_y / 2.0 > sl_half_y + fit_tol) {
             dd4hep::printout(dd4hep::ERROR, "SiTargetDetector",
                 "GEOMETRY ERROR: sensor array (%.1f x %.1f) does not fit "
                 "in slice (%.1f x %.1f)! Reduce sensor sizes.",

@@ -15,6 +15,9 @@ target_link_libraries(SiPadDetector_plugin DD4hep::DDCore)
 dd4hep_add_plugin(SiTargetDetector_plugin SOURCES detector_plugin/SiTargetDetector.cpp)
 target_link_libraries(SiTargetDetector_plugin DD4hep::DDCore)
 
+dd4hep_add_plugin(EmulsionTargetDetector_plugin SOURCES detector_plugin/EmulsionTargetDetector.cpp)
+target_link_libraries(EmulsionTargetDetector_plugin DD4hep::DDCore)
+
 dd4hep_add_plugin(MTCDetector_plugin
   SOURCES
     detector_plugin/MTCDetector.cpp

@@ -38,9 +38,8 @@
 
 
     <!-- Directly derived parameters -->
-    <constant name="SiTarget_dim_z"          value="1700*mm-SiPad_dim_z"/>
+    <constant name="SiTarget_dim_z"          value="1502*mm-SiPad_dim_z"/>
     <constant name="SiTarget_z_position"     value="-SiTarget_dim_z/2.0-SiPad_dim_z"/>
-
 
     <!-- ECAL geometry constants (from SiPad_commondefs.xml) -->
     <constant name="SiPad_z_position"         value="-SiPad_dim_z/2.0"/>
@@ -102,8 +101,15 @@
     <constant name="MTC60_env_width"     value="600.0*mm"/>
     <constant name="MTC60_env_height"    value="600.0*mm"/>
 
+    <!-- Width of the magnetic iron core inside the 50 mm absorber (slice 0);
+         the remaining transverse footprint is filled with (non-magnetic) Steel -->
+    <constant name="MTC40_iron_width" value="400.0*mm"/>
+    <constant name="MTC50_iron_width" value="500.0*mm"/>
+    <constant name="MTC60_iron_width" value="600.0*mm"/>
+
     <!-- Z centres: gap of 600 mm after SiPad downstream face, stations back-to-back.
-         MTC_inter_station_gap avoids the 0.2 mm envelope overlap (2 × 0.1 mm plugin safety). -->
+         MTC_inter_station_gap avoids the envelope overlap from the plugin's
+         (now correctly-converted, 0.001 mm) safety margin. -->
     <constant name="MTC_inter_station_gap" value="1.0*mm"/>
     <constant name="MTC40_z_position"    value="MTC_total_length/2.0 + MTC_inter_station_gap"/>
     <constant name="MTC50_z_position"    value="MTC40_z_position + MTC_total_length + MTC_inter_station_gap"/>
@@ -121,11 +127,17 @@
 
   <display>
     <vis name="Invisible"    alpha="0.0" r="0"   g="0"    b="0"    showDaughters="false" visible="false"/>
+    <!-- Container volumes (MTC station envelopes, layers): not drawn themselves
+         but their contents are. Without this entry the plugin's
+         setVisAttributes() call silently does nothing. -->
+    <vis name="InvisibleWithDaughters" alpha="0.0" r="0"   g="0"    b="0"    showDaughters="true"  visible="false"/>
+    <vis name="SteelVis"     alpha="1.0" r="0.15" g="0.75" b="0.35" showDaughters="true"  visible="true"/>
     <vis name="EcalVis"      alpha="0.1" r="0.7" g="0.7"  b="0.0"  showDaughters="true"  visible="false"/>
     <vis name="TungstenVis"  alpha="0.5" r="0.5" g="0.35" b="0.55" showDaughters="true"  visible="true"/>
     <vis name="AirVis"       alpha="0.01" r="1.0" g="1.0"  b="1.0"  showDaughters="true"  visible="false"/>
     <vis name="SiVis"        alpha="0.5" r="0.9" g="0.9"  b="0.9"  showDaughters="true"  visible="true"/>
-    <vis name="AlVis"        alpha="0.1" r="0.7" g="0.7"  b="0.7"  showDaughters="true"  visible="true"/>
+    <vis name="AlVis"        alpha="0.9" r="0.3" g="0.6"  b="0.9"  showDaughters="true"  visible="true"/>
+    <vis name="BaseVis"      alpha="0.3" r="0.9" g="0.8"  b="0.4"  showDaughters="true"  visible="true"/>
     <vis name="PCBVis"       alpha="0.1" r="0.0" g="0.8"  b="0.0"  showDaughters="true"  visible="true"/>
     <vis name="CFVis"        alpha="0.1" r="0.0" g="0.0"  b="0.0"  showDaughters="true"  visible="false"/>
     <vis name="CuVis"        alpha="0.1" r="1.0" g="0.5"  b="0.0"  showDaughters="true"  visible="false"/>
@@ -136,8 +148,8 @@
       <segmentation type="CartesianGridXY"
                     grid_size_x="SiPad_CellSizeX"
                     grid_size_y="SiPad_CellSizeY"
-                    offset_x="-(Ecal_dim_x-Ecal_CellSizeX)/2.0" 
-                    offset_y="-(Ecal_dim_y-Ecal_CellSizeY)/2.0"/>
+                    offset_x="-(SiPad_dim_x-SiPad_CellSizeX)/2.0" 
+                    offset_y="-(SiPad_dim_y-SiPad_CellSizeY)/2.0"/>
       <id>system:8,layer:8,slice:4,x:9,y:9</id>
     </readout>
 
