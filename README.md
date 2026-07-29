@@ -47,3 +47,20 @@ python event_display_eve.py --hits ../gaudi_jobs/2_mu_pipeline/ShipHits.root --w
 # where window is the "event"
 
 ```
+
+## Git hooks
+
+`.githooks/commit-msg` strips AI self-attribution (`Co-Authored-By` trailers
+naming an AI vendor, `Claude-Session` / `Codex-Session` trailers, "Generated
+with ..." footers) from commit messages. Human co-authors are untouched.
+
+Git does not enable hooks that come with a clone, so activate it once per
+working copy:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This is repo-local and overrides a global `core.hooksPath`. It redirects
+*all* hooks to that directory, so anything you keep only in `.git/hooks`
+stops running — move it to `.githooks/` if you need both.

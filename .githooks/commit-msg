@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#
+# Strip AI self-attribution from commit messages.
+#
+# Claude Code, Codex and friends are told to append a Co-Authored-By trailer and
+# a "Generated with ..." footer. This repo's author is a single person, so the
+# lines are noise at best and wrong at worst. Removing them here rather than
+# asking the tool nicely means it holds regardless of which agent, which prompt
+# and which version of its system instructions is in play.
+#
+# Human co-authors are left alone: only trailers pointing at an AI vendor go.
+#
+# Git never enables a hook that arrives with a clone, so activate it once per
+# working copy with:
+#
+#     git config core.hooksPath .githooks
+#
+# That is repo-local and overrides any global core.hooksPath. Note it points
+# git at this directory for ALL hooks, so a hook you keep only in .git/hooks
+# stops running; move it here if you need both.
+
+set -euo pipefail
+
+msg_file="$1"
+
+perl -0777 -i -pe '
+    # Co-Authored-By trailers naming an AI tool or vendor domain.
+    s{^Co-authored-by:[^\n]*\b(claude|codex|chatgpt|gpt-[0-9]|copilot|cursor|devin|anthropic|openai)\b[^\n]*\n}{}gim;
+
+    # Session / provenance trailers.
+    s{^(Claude-Session|Codex-Session|Generated-By|Assisted-By):[^\n]*\n}{}gim;
+
+    # "Generated with [Claude Code](...)" footers, with or without the emoji.
+    s{^[^\n]*Generated with[^\n]*\b(Claude Code|Codex|Copilot)\b[^\n]*\n}{}gim;
+
+    # Bare session/tool URLs left behind by the footer.
+    s{^\s*https?://(claude\.ai/code|chatgpt\.com/codex)\S*\s*\n}{}gim;
+
+    # Collapse the blank lines the removals leave behind, and trim the tail.
+    s{\n{3,}}{\n\n}g;
+    s{\s+\z}{\n};
+' "$msg_file"
+
+exit 0
