@@ -26,3 +26,7 @@ simulation/run_script/macros
 simulation/geometry/__pycache__
 simulation/run_script/__pycache__
 *__pycache__*
+
+# AFS orphaned copies (ROOT files without the .root extension, so the rule
+# above does not catch them)
+.__afs*
