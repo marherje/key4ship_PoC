@@ -34,21 +34,77 @@
     <!-- Input parameters -->
     <constant name="SiPad_WThickness"        value="10*mm"/>
     <constant name="SiTarget_WThickness"     value="3.5*mm"/>
-    <constant name="SiPad_dim_z"              value="200*mm"/>
+    <constant name="SiPad_dim_z"              value="370*mm"/>
 
 
     <!-- Directly derived parameters -->
-    <constant name="SiTarget_dim_z"          value="1502*mm-SiPad_dim_z"/>
+    <constant name="SiTarget_dim_z"          value="1700*mm-SiPad_dim_z"/>
     <constant name="SiTarget_z_position"     value="-SiTarget_dim_z/2.0-SiPad_dim_z"/>
 
     <!-- ECAL geometry constants (from SiPad_commondefs.xml) -->
     <constant name="SiPad_z_position"         value="-SiPad_dim_z/2.0"/>
-    <constant name="SiPad_NcellsX"            value="32"/> <!-- per sensor -->
-    <constant name="SiPad_NcellsY"            value="32"/> <!-- per sensor -->
-    <constant name="SiPad_CellSizeX"          value="5.625*mm"/>
-    <constant name="SiPad_CellSizeY"          value="5.625*mm"/>
-    <constant name="SiPad_dim_x"              value="3*SiPad_NcellsX*SiPad_CellSizeX"/> <!-- array of sensors -->
-    <constant name="SiPad_dim_y"              value="3*SiPad_NcellsY*SiPad_CellSizeY"/> <!-- array of sensors -->
+
+    <!-- Transverse tiling: 3x3 ASUs, each ASU a 2x2 array of silicon sensors,
+         i.e. 6x6 wafers per sensitive plane. Three length scales, measured on
+         the real sensor:
+           * the active diode      SiPad_PadSizeX   = 5.52 mm
+           * the inter-pad margin  SiPad_PadMarginX = 0.01 mm
+           * the pixel pitch       SiPad_CellSizeX  = 5.53 mm (sum of the two)
+         so 16 pixels span SiPad_WaferActiveX = 88.48 mm. The sensor itself
+         carries an inactive rim SiPad_WaferMarginX = 0.61 mm all round, giving
+         a physical sensor of 88.48 + 2*0.61 = 89.70 mm.
+
+         The 0.01 mm inter-pad margin is silicon belonging to no diode; it is
+         far below any Geant4 step length and is not modelled as a volume: the
+         pad array is one sensitive block that the segmentation tiles at the
+         5.53 mm pitch. The 0.61 mm rim IS modelled, as a non-sensitive silicon
+         frame around that block (see SiPadDetector.cpp). -->
+    <constant name="SiPad_PadSizeX"           value="5.52*mm"/>
+    <constant name="SiPad_PadSizeY"           value="5.52*mm"/>
+    <constant name="SiPad_PadMarginX"         value="0.01*mm"/>
+    <constant name="SiPad_PadMarginY"         value="0.01*mm"/>
+    <!-- Pixel pitch: what the readout segmentation tiles the sensor with. -->
+    <constant name="SiPad_CellSizeX"          value="SiPad_PadSizeX+SiPad_PadMarginX"/>
+    <constant name="SiPad_CellSizeY"          value="SiPad_PadSizeY+SiPad_PadMarginY"/>
+    <constant name="SiPad_NPadsPerWaferX"     value="16"/>
+    <constant name="SiPad_NPadsPerWaferY"     value="16"/>
+    <constant name="SiPad_WaferMarginX"       value="0.61*mm"/>
+    <constant name="SiPad_WaferMarginY"       value="0.61*mm"/>
+    <!-- Sensitive pad array, and the physical sensor that holds it. -->
+    <constant name="SiPad_WaferActiveX"       value="SiPad_NPadsPerWaferX*SiPad_CellSizeX"/>
+    <constant name="SiPad_WaferActiveY"       value="SiPad_NPadsPerWaferY*SiPad_CellSizeY"/>
+    <constant name="SiPad_WaferSizeX"         value="SiPad_WaferActiveX+2*SiPad_WaferMarginX"/>
+    <constant name="SiPad_WaferSizeY"         value="SiPad_WaferActiveY+2*SiPad_WaferMarginY"/>
+    <!-- Wafers per ASU, per side. The sensors are butted, so the extra
+         clearance is zero and the dead cross inside an ASU is exactly
+         2*SiPad_WaferMarginX = 1.22 mm. -->
+    <constant name="SiPad_NWafersX"           value="2"/>
+    <constant name="SiPad_NWafersY"           value="2"/>
+    <constant name="SiPad_WaferGapX"          value="0*mm"/>
+    <constant name="SiPad_WaferGapY"          value="0*mm"/>
+    <!-- ASUs tiled per plane. One ASU is 180 mm while its wafers span
+         2*89.70 = 179.4 mm, leaving 0.3 mm of inactive border per side, so
+         butting ASUs at this pitch gives a 2*(0.3+0.61) = 1.82 mm dead region
+         between sensors of adjacent ASUs. Changing NASUs* requires
+         regenerating the SiPadHits readout below:
+             python3 simulation/geometry/make_readout.py <NASUsX> <NASUsY>  -->
+    <constant name="SiPad_NASUsX"             value="3"/>
+    <constant name="SiPad_NASUsY"             value="3"/>
+    <constant name="SiPad_ASUPitchX"          value="180*mm"/>
+    <constant name="SiPad_ASUPitchY"          value="180*mm"/>
+    <constant name="SiPad_NcellsX"            value="SiPad_NASUsX*SiPad_NWafersX*SiPad_NPadsPerWaferX"/>
+    <constant name="SiPad_NcellsY"            value="SiPad_NASUsY*SiPad_NWafersY*SiPad_NPadsPerWaferY"/>
+    <constant name="SiPad_dim_x"              value="SiPad_NASUsX*SiPad_ASUPitchX"/>
+    <constant name="SiPad_dim_y"              value="SiPad_NASUsY*SiPad_ASUPitchY"/>
+    <!-- Segmentation offset of the first wafer column/row. The grid is local to
+         the sensitive pad array of a wafer (5.53 mm pitch, 16 pads, so the
+         offset is measured from SiPad_WaferActiveX and NOT from the physical
+         sensor size); the readout block shifts this offset by a whole pad array
+         per column/row so the x/y indices come out as the GLOBAL pad indices
+         across the plane (0..95 for 3x3 ASUs). -->
+    <constant name="SiPad_SegOffsetX0"        value="-(SiPad_WaferActiveX-SiPad_CellSizeX)/2.0"/>
+    <constant name="SiPad_SegOffsetY0"        value="-(SiPad_WaferActiveY-SiPad_CellSizeY)/2.0"/>
+
     <constant name="SiPad_CFThickness"        value="1.5*mm"/>
     <constant name="SiPad_KaptonThickness"    value="0.1*mm"/>
     <constant name="SiPad_GlueThickness_kap"  value="0.1*mm"/>
@@ -144,13 +200,191 @@
   </display>
 
   <readouts>
+    <!-- 3x3 ASUs = 6x6 wafers = 96x96 pads. Generated by make_readout.py, do not edit by hand. -->
     <readout name="SiPadHits">
-      <segmentation type="CartesianGridXY"
-                    grid_size_x="SiPad_CellSizeX"
-                    grid_size_y="SiPad_CellSizeY"
-                    offset_x="-(SiPad_dim_x-SiPad_CellSizeX)/2.0" 
-                    offset_y="-(SiPad_dim_y-SiPad_CellSizeY)/2.0"/>
-      <id>system:8,layer:8,slice:4,x:9,y:9</id>
+      <segmentation type="MultiSegmentation" key="wafer">
+        <segmentation name="wafer0" type="TiledLayerGridXY" key_value="0"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0"
+                      offset_y="SiPad_SegOffsetY0"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer1" type="TiledLayerGridXY" key_value="1"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-1*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer2" type="TiledLayerGridXY" key_value="2"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-2*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer3" type="TiledLayerGridXY" key_value="3"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-3*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer4" type="TiledLayerGridXY" key_value="4"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-4*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer5" type="TiledLayerGridXY" key_value="5"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-5*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer6" type="TiledLayerGridXY" key_value="6"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0"
+                      offset_y="SiPad_SegOffsetY0-1*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer7" type="TiledLayerGridXY" key_value="7"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-1*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-1*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer8" type="TiledLayerGridXY" key_value="8"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-2*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-1*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer9" type="TiledLayerGridXY" key_value="9"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-3*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-1*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer10" type="TiledLayerGridXY" key_value="10"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-4*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-1*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer11" type="TiledLayerGridXY" key_value="11"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-5*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-1*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer12" type="TiledLayerGridXY" key_value="12"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0"
+                      offset_y="SiPad_SegOffsetY0-2*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer13" type="TiledLayerGridXY" key_value="13"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-1*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-2*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer14" type="TiledLayerGridXY" key_value="14"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-2*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-2*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer15" type="TiledLayerGridXY" key_value="15"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-3*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-2*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer16" type="TiledLayerGridXY" key_value="16"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-4*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-2*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer17" type="TiledLayerGridXY" key_value="17"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-5*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-2*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer18" type="TiledLayerGridXY" key_value="18"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0"
+                      offset_y="SiPad_SegOffsetY0-3*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer19" type="TiledLayerGridXY" key_value="19"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-1*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-3*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer20" type="TiledLayerGridXY" key_value="20"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-2*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-3*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer21" type="TiledLayerGridXY" key_value="21"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-3*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-3*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer22" type="TiledLayerGridXY" key_value="22"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-4*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-3*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer23" type="TiledLayerGridXY" key_value="23"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-5*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-3*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer24" type="TiledLayerGridXY" key_value="24"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0"
+                      offset_y="SiPad_SegOffsetY0-4*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer25" type="TiledLayerGridXY" key_value="25"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-1*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-4*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer26" type="TiledLayerGridXY" key_value="26"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-2*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-4*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer27" type="TiledLayerGridXY" key_value="27"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-3*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-4*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer28" type="TiledLayerGridXY" key_value="28"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-4*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-4*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer29" type="TiledLayerGridXY" key_value="29"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-5*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-4*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer30" type="TiledLayerGridXY" key_value="30"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0"
+                      offset_y="SiPad_SegOffsetY0-5*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer31" type="TiledLayerGridXY" key_value="31"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-1*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-5*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer32" type="TiledLayerGridXY" key_value="32"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-2*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-5*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer33" type="TiledLayerGridXY" key_value="33"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-3*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-5*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer34" type="TiledLayerGridXY" key_value="34"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-4*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-5*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+        <segmentation name="wafer35" type="TiledLayerGridXY" key_value="35"
+                      grid_size_x="SiPad_CellSizeX" grid_size_y="SiPad_CellSizeY"
+                      offset_x="SiPad_SegOffsetX0-5*SiPad_NPadsPerWaferX*SiPad_CellSizeX"
+                      offset_y="SiPad_SegOffsetY0-5*SiPad_NPadsPerWaferY*SiPad_CellSizeY"
+                      identifier_x="x" identifier_y="y" identifier_layer="layer"/>
+      </segmentation>
+      <id>system:8,layer:8,slice:4,x:9,y:9,wafer:6</id>
     </readout>
 
     <!-- MTC unified readout: plane=0 (SciFi U), plane=1 (SciFi V), plane=2 (Scint).

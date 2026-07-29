@@ -139,8 +139,13 @@ StatusCode ACTSGeoSvc::initialize() {
                 (volName.find("_slice_2") != std::string::npos ||
                  volName.find("_slice_4") != std::string::npos);
       } else if (detName == "SiPad") {
+        // The sensitive slice is tiled: it holds 6x6 wafer volumes named
+        // <slice>_wafer / <slice>_wafer_pads, which also match "_slice_4".
+        // The ACTS surface is the full slice container (one per layer), so
+        // the wafers must be excluded or every layer would yield 37 surfaces.
         isSensitive = (volName.find("SiPad_layer_") != std::string::npos) &&
-                (volName.find("_slice_4") != std::string::npos);
+                (volName.find("_slice_4") != std::string::npos) &&
+                (volName.find("_wafer") == std::string::npos);
       } else if (detName == "MTC") {
         isSensitive = (volName.find("_slice_2") != std::string::npos ||
                        volName.find("_slice_4") != std::string::npos);

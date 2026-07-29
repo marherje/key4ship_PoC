@@ -5,6 +5,25 @@
 
   <type_flags type="DetType_TRACKER + DetType_BARREL + DetType_PIXEL"/>
 
+  <!-- Wafer layout of every sensitive slice: asus_x * asus_y ASUs on a fixed
+       pitch, each ASU holding wafers_x * wafers_y silicon sensors of
+       wafer_size_x * wafer_size_y. Each sensor is silicon throughout, but only
+       the central part is a diode: margin_x / margin_y is the inactive rim, so
+       the sensitive area is wafer_size - 2*margin. The sensitive part carries
+       the 'wafer' physVolID, numbered globally across the plane.
+
+       Everything else is dead: the rim, the optional extra clearance gap_x /
+       gap_y between two sensors, the space between ASUs and the outer border
+       of the plane, all filled with the non-sensitive 'gap_material'.
+       Particles crossing any of them produce no hit. -->
+  <tiling asus_x="SiPad_NASUsX"           asus_y="SiPad_NASUsY"
+          asu_pitch_x="SiPad_ASUPitchX"   asu_pitch_y="SiPad_ASUPitchY"
+          wafers_x="SiPad_NWafersX"       wafers_y="SiPad_NWafersY"
+          wafer_size_x="SiPad_WaferSizeX" wafer_size_y="SiPad_WaferSizeY"
+          margin_x="SiPad_WaferMarginX"   margin_y="SiPad_WaferMarginY"
+          gap_x="SiPad_WaferGapX"         gap_y="SiPad_WaferGapY"
+          gap_material="Air"/>
+
   <envelope vis="EcalVis">
     <shape type="Box"
            dx="SiPad_dim_x/2.0 + env_safety"

@@ -21,8 +21,10 @@ def walk(node, path=""):
         if ok:
             t = mgr.GetCurrentMatrix().GetTranslation()
 
-            # --- SiPad: only slice_4 ---
-            if "SiPad" in current_path and "_slice_4" in name:
+            # --- SiPad: only slice_4 (the tiled wafer volumes inside it
+            #     also match "_slice_4", so they must be excluded) ---
+            if "SiPad" in current_path and "_slice_4" in name \
+                    and "_wafer" not in name:
                 print(f"{'SiPad':<12} {name:<45} x={t[2]:8.2f}")
                 z_lists["SiPad"].append(round(t[2], 2))
 
