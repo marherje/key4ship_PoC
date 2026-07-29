@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Diagnostic table for multi-PG geometry-scan reconstructions.
+"""Diagnostic table for multi-PG reconstructions.
 
 Usage (with the key4hep environment):
-    python3 scan_table.py multi_pg_geoA_pipeline [multi_pg_geoB_pipeline ...]
+    python3 scan_table.py multi_pg_pipeline [<other>_pipeline ...]
 
 Reads every tracks_<pair>_angle_<a>.edm4hep.root in the given pipeline
 directories and prints, per sample: % of events with the expected track
