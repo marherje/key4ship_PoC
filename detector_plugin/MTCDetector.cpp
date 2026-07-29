@@ -8,10 +8,12 @@
 //    | inner iron | scintillator
 //
 //  If the detector XML has a field_y attribute (e.g., 1.0*tesla),
-//  a uniform By field is added to the global DD4hep field for every
-//  iron slice of every layer (the 50 mm outer absorber and both 3 mm
-//  inner slices). In split stations only the iron core is magnetised;
-//  the steel filler around it is not.
+//  a uniform By field is added to the global DD4hep field for the
+//  outer absorber of every layer (slice 0, the 50 mm iron slab) only.
+//  The thin inner iron slices that sandwich the SciFi/scintillator
+//  planes are NOT magnetised, which is what the ACTS field map in
+//  job4_tracking.py assumes. In split stations only the iron core is
+//  magnetised; the steel filler around it is not.
 //====================================================================
 #include "DD4hep/DetFactoryHelper.h"
 #include "DD4hep/FieldTypes.h"
@@ -181,12 +183,13 @@ dd4hep::Ref_t create_MTCDetector(dd4hep::Detector& description,
           std::string slice_name   = layer_name + "_slice_" + std::to_string(slice_in_layer);
           double      sl_center_z  = local_z + thick / 2.0;
 
-          // Every iron slice carries the field, not just the thick outer
-          // absorber. cur_z is the layer start and local_z the slice start
+          // Only the thick outer absorber (slice 0) carries the field; the
+          // inner iron slices around the SciFi/scintillator planes stay
+          // field-free. cur_z is the layer start and local_z the slice start
           // relative to the layer centre, so the slice's global Z start is
           // z0 + cur_z + layer_thick/2 + local_z (which reduces to
-          // z0 + cur_z for slice 0, as before).
-          if (mat_name == "Iron" && bFieldY != 0.0) {
+          // z0 + cur_z for slice 0).
+          if (mat_name == "Iron" && slice_in_layer == 0 && bFieldY != 0.0) {
             double slab_lo = z0 + cur_z + layer_thick / 2.0 + local_z;
             double slab_hi = slab_lo + thick;       // global Z end
             // Only the iron core is magnetised; the steel filler (when split)
