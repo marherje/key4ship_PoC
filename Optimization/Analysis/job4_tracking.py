@@ -1,0 +1,155 @@
+from k4FWCore import ApplicationMgr, IOSvc
+from Configurables import ACTSGeoSvc, SiTargetMeasConverter, \
+                          SiPadMeasConverter, MTCSciFiMeasConverter, ACTSProtoTracker
+from Gaudi.Configuration import DEBUG, ERROR, INFO, WARNING
+import os
+import sys
+from pathlib import Path
+
+# Verbosity of the converters and the tracker. DEBUG stays the default so
+# running this job by hand is unchanged, but an optimization run sets
+# SND_OUTPUT_LEVEL=INFO: at DEBUG this job writes hundreds of MB of log per
+# variant, which is unusable at the scale of a scan.
+_LEVELS = {"DEBUG": DEBUG, "INFO": INFO, "WARNING": WARNING, "ERROR": ERROR}
+OUTPUT_LEVEL = _LEVELS.get(os.environ.get("SND_OUTPUT_LEVEL", "DEBUG").upper(), DEBUG)
+
+# Optimization/Analysis/jobX.py -> parents[2] is the repo root (one level less
+# deep than the gaudi_jobs/<pipeline>/ originals, which use parent.parent.parent).
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "simulation" / "geometry"))
+from parse_geometry import SNDGeometry
+
+# The variant being analysed; falls back to the committed baseline.
+COMPACT = os.environ.get(
+    "SND_COMPACT", str(REPO / "simulation" / "geometry" / "SND_compact.xml"))
+geo = SNDGeometry(COMPACT)
+
+# ── MTC outer iron magnetic field map ─────────────────────────────────────────
+# All geometry constants come from SND_compact.xml via SNDGeometry.
+MTC_BFIELD_Y    = geo.mtc_bfield_y
+MTC_FE_THICK    = geo.mtc_outer_fe_thick
+MTC_LAYER_THICK = geo.mtc_layer_thick
+MTC_N_LAYERS    = geo.mtc_n_layers
+MTC_TOTAL_LEN   = MTC_N_LAYERS * MTC_LAYER_THICK
+MTC_INTER_GAP   = geo.mtc_inter_gap
+
+MTC40_Z, MTC50_Z, MTC60_Z = geo.mtc_station_z_centers
+
+# Station (z_center, ACTS-Y half-size, ACTS-Z half-size) in mm + 1 mm margin.
+# ACTS coords: x = beam axis (= DD4hep Z), y = DD4hep Y, z = DD4hep X.
+_station_params = [
+    (z, h + 1.0, h + 1.0)
+    for z, h in zip(geo.mtc_station_z_centers, geo.mtc_station_env_half_heights)
+]
+# Flat list: [xlo, xhi, ylo, yhi, zlo, zhi, by] per outer iron slab
+_iron_ranges = []
+for _z_ctr, _yhalf, _zhalf in _station_params:
+    _front = _z_ctr - MTC_TOTAL_LEN / 2.0
+    for _layer in range(MTC_N_LAYERS):
+        _lo = _front + _layer * MTC_LAYER_THICK
+        _hi = _lo + MTC_FE_THICK
+        _iron_ranges.extend([_lo, _hi, -_yhalf, _yhalf, -_zhalf, _zhalf, MTC_BFIELD_Y])
+# ──────────────────────────────────────────────────────────────────────────────
+
+iosvc = IOSvc()
+iosvc.Input          = "events.edm4hep.root"
+iosvc.Output         = "tracks.edm4hep.root"
+# keep * forwards all input collections (including MTCSciFiHitsWindowed and
+# MTCScintHitsWindowed) to the output so job5 can write them to the RNTuple.
+iosvc.outputCommands = ["keep *"]
+
+geosvc = ACTSGeoSvc("ACTSGeoSvc")
+geosvc.CompactFile = COMPACT
+geosvc.OutputLevel = INFO
+
+sitarget_conv = SiTargetMeasConverter("SiTargetMeasConverter")
+sitarget_conv.GeoSvc           = "ACTSGeoSvc"
+sitarget_conv.InputCollection  = "SiTargetHitsWindowed"
+sitarget_conv.OutputCollection = "SiTargetMeasurements"
+sitarget_conv.BitField         = geo.bitfields["SiTargetHits"]
+sitarget_conv.StripPitch       = geo.sitarget_strip_pitch
+sitarget_conv.NSensorCols  = geo.sitarget_sensor_ncols
+sitarget_conv.NSensorRows  = geo.sitarget_sensor_nrows
+sitarget_conv.SensorWidth  = geo.sitarget_sensor_width
+sitarget_conv.SensorHeight = geo.sitarget_sensor_height
+sitarget_conv.SensorGap    = geo.sitarget_sensor_gap
+sitarget_conv.OutputLevel      = OUTPUT_LEVEL
+
+sipad_conv = SiPadMeasConverter("SiPadMeasConverter")
+sipad_conv.GeoSvc           = "ACTSGeoSvc"
+sipad_conv.InputCollection  = "SiPadHitsWindowed"
+sipad_conv.OutputCollection = "SiPadMeasurements"
+sipad_conv.BitField         = geo.bitfields["SiPadHits"]
+sipad_conv.PixelSizeX       = geo.ecal_cell_size_x
+sipad_conv.PixelSizeY       = geo.ecal_cell_size_y
+sipad_conv.OutputLevel      = OUTPUT_LEVEL
+
+mtcscifi_conv = MTCSciFiMeasConverter("MTCSciFiMeasConverter")
+mtcscifi_conv.GeoSvc           = "ACTSGeoSvc"
+mtcscifi_conv.InputCollection  = "MTCSciFiHitsWindowed"
+mtcscifi_conv.OutputCollection = "MTCSciFiMeasurements"
+mtcscifi_conv.BitField         = geo.bitfields["MTCDetHits"]
+mtcscifi_conv.StripPitch       = geo.mtc_scifi_channel_size
+mtcscifi_conv.StereoAngleDeg   = geo.mtc_fiber_angle_deg
+# U/V preselection strategy. "AllPairs" emits one 2D measurement per U×V combo
+# on the combined surface (constrains y per-layer, kills the stereo y-drift).
+# Set to "None" to fall back to the per-plane 1D emission (legacy).
+mtcscifi_conv.PairMethod       = "AllPairs"
+# mtcscifi_conv.PairMethod       = "None"
+mtcscifi_conv.PairMaxDz        = 25.0   # mm — accept U/V partners within this Δz
+mtcscifi_conv.OutputLevel      = OUTPUT_LEVEL
+
+proto = ACTSProtoTracker("ACTSProtoTracker")
+proto.GeoSvc           = "ACTSGeoSvc"
+proto.InputSiTarget    = "SiTargetMeasurements"
+proto.InputSiPad       = "SiPadMeasurements"
+proto.InputMTC         = "MTCSciFiMeasurements"
+proto.MTCStereoAngle   = geo.mtc_fiber_angle_deg
+proto.OutputCollection = "ACTSTracks"
+proto.IronFieldRanges  = _iron_ranges  # MultiRangeBField in MTC outer iron slabs
+# Hough Transform automatic seeding
+proto.AutoSeed         = True
+proto.MaxSeeds         = 3
+proto.HoughBinSize     = 5.0    # mm — coarser ok since we use 2D crossings
+proto.HoughHalfSize    = 200.0  # mm
+proto.HoughMinVotes    = 3      # crossings: each station contributes 1 crossing
+proto.SeedCompatRadius = 8.0    # mm — radius for centroid refinement
+proto.SeedStripPitch   = geo.sitarget_strip_pitch
+proto.SeedMomentum     = 3.0   # GeV
+proto.MaxChi2PerNdf         = 10.0
+proto.HoughMaxMultiplicity  = 10.0  # safety net after isolation filter
+# CKF MeasurementSelector: per-surface chi2 cut and max measurements
+proto.Chi2CutOff            = 70.0  # local chi2 to accept a measurement
+proto.NumMeasCutOff         = 1     # max measurements per surface
+# Iterative annealed fit: SiPad up-weighted during the first CKF passes to
+# anchor the trajectory in y (SiPad is the only unambiguous 2D detector),
+# relaxed back to nominal over the iterations; final KalmanFitter refit at
+# nominal weights on the frozen hit set gives unbiased parameters.
+proto.SiPadWeight           = 16.0  # sigma_eff ~ 0.4 mm during pattern reco
+proto.AnnealingIterations   = 3
+proto.FinalRefit            = True
+proto.SeedCleaning          = True   # mask used hits between seeds
+# Shower-hit purge of the measurement pool, per detector [SiTarget, SiPad, MTC].
+# Scales differ: 75um strips (delta-ray clusters ~mm) vs 5.5mm pads vs MTC
+# U/V pair combinatorics (excluded: multiplicity there is not physical density).
+proto.HitPurgeWindow        = [1.0, 8.0, 0.0]   # mm
+proto.HitPurgeMaxNeighbors  = [8, 4, 0]
+# Crossing isolation filter for shower rejection
+# Filters crossings (SiTarget) and positions (SiPad) by 2D density
+# within each station/layer. Isolated = few neighbors within IsolationWindow.
+proto.IsolationWindow       = 5.0   # mm — 2D radius for neighbor counting
+proto.IsolationMaxNeighbors = 2     # max neighbors to be considered isolated
+                                    # muon: 0 neighbors → always passes
+                                    # shower: hundreds → always rejected
+
+# Disable manual seeding (AutoSeed=True overrides these)
+# proto.SeedPositions  = [...]
+# proto.SeedDirections = [...]
+proto.OutputLevel      = OUTPUT_LEVEL
+
+ApplicationMgr(
+    EvtSel  = "NONE",
+    EvtMax  = -1,
+    TopAlg  = [sitarget_conv, sipad_conv, mtcscifi_conv, proto],
+    ExtSvc  = [iosvc, geosvc]
+)

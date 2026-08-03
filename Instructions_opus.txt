@@ -1,0 +1,339 @@
+# Plan: Framework MOBO (Multi-Objective Bayesian Optimization) para la geometría del SND
+
+## Contexto
+
+Queremos optimizar la geometría del detector SND de SHiP con optimización bayesiana multiobjetivo. Ya existe en `Optimization/` toda la infraestructura de evaluación: generación de variantes de geometría DD4hep (`Simulation/geometry/config.py::write_variant`, `make_variants.py`), simulación ddsim (`Simulation/run_scripts/run_sim.py`) y cadena de análisis Gaudi (`Analysis/job1_overlay.py` → `job4_tracking.py` → `job5_rntuple.py` → `compute_fom.py`), orquestada secuencialmente por `Optimization/controller.py`.
+
+Lo que falta es el optimizador: un bucle *ask/tell* basado en BoTorch que proponga geometrías, las evalúe de forma **asíncrona en HTCondor**, y aprenda de los resultados. Decisiones ya tomadas con el usuario:
+
+1. **MOBO primero con proxies**: el framework arranca con objetivos dummy (nhits de SiPad + proxy de coste + cpu_time) para validar el loop end-to-end. Las métricas físicas reales (eficiencia, resolución desde `ACTSTracks`) se difieren a una fase posterior.
+2. **HTCondor desde la Fase 1 del executor**: el diseño asíncrono es crítico; la ejecución local queda como fallback de debugging (y como modo de test).
+3. **Paquete instalable en `Optimization/` + venv** sobre el Python de key4hep (`--system-site-packages`) para tener BoTorch/PyTorch y a la vez ROOT/PyYAML del stack.
+
+**Restricción del usuario: todo debe quedar contenido dentro de `Optimization/`** — el paquete, el venv, los workdirs de los runs, las plantillas de Condor y el gitignore de los productos. No se toca nada fuera de `Optimization/` (lo único externo que se *lee* es `init_key4ship.sh` y `simulation/geometry/` compartida, como ya hace el código actual).
+
+Principio arquitectónico central: **el optimizador es 100 % agnóstico del detector**. Solo conoce un espacio de búsqueda genérico y un `Evaluator` que recibe un dict de parámetros y devuelve un dict de objetivos. Todo lo específico de SHiP/DD4hep vive detrás de esa interfaz.
+
+Este plan está pensado para que Opus lo implemente módulo a módulo durante ~2 días, con tests y cross-checks en cada fase.
+
+---
+
+## Hechos clave del código existente (referencias para la implementación)
+
+| Qué | Dónde | Nota |
+|---|---|---|
+| Render + validación de una variante | `Optimization/Simulation/geometry/config.py` → `write_variant(constants, out_path, dry_run=False)` devuelve `(ok, lines, errors)` | `dry_run=True` es un **oráculo de factibilidad barato** (sin simulación). `load_params(path)` da `(name, constants)` base. |
+| Parámetros libres (10) | `parameters_template.yaml` | `SiPad_WThickness, SiPad_layer_gap (auto), SiPad_frame_gap, SiPad_dim_z, SiPad_NLayers, SiTarget_WThickness, SiTarget_module_offset, SiTarget_spacing, SiTarget_XY_plane_gap, SiTarget_NLayers` |
+| Restricciones acopladas | `SND_compact_template.xml` líneas ~119–144 | `SiPad_NLayers ≤ SiPad_NLayers_max`, `SiTarget_NLayers ≤ SiTarget_NLayers_max`, `SiTarget_XY_plane_gap ≤ …_max`, y el acoplo duro `SiTarget_dim_z = 1700 − SiPad_dim_z` |
+| Simulación de una variante | `Optimization/Simulation/run_scripts/run_sim.py` | ddsim local, `--compact --var-dir --events`. **No expone semilla aleatoria** (hay que añadirla). |
+| Cadena de análisis | `Optimization/Analysis/` con `k4run`, cwd = `Analysis/variants/varNNNNN`, env `SND_COMPACT` + `INPUT_FILE` | `job4_tracking.py` tiene `OutputLevel=DEBUG` (logs enormes; bajar a INFO en jobs de producción del loop) |
+| FOM actual | `Analysis/compute_fom.py` | entero (nhits SiPad) → `fom.txt`. Se sustituye por un `metrics.json`. |
+| Cadena completa de 1 variante | `Optimization/controller.py::run_variant()` | Referencia de los pasos exactos y estados de error (`sim_failed`, `job4_failed`, …). El payload de HTCondor replica esta secuencia. |
+| Plantilla de submit HTCondor | `simulation/run_script/generic_condor_multiplePG.sh` + `launch_multiplePG.sh` | Honran `RUN_LOCAL=1`. Sirven de modelo para el executor Condor. |
+| Entorno | `init_key4ship.sh` (raíz repo) | `source /cvmfs/sw.hsf.org/key4hep/setup.sh -r 2026-02-01` + prepend de `install/{lib64,lib,python}`. Python del stack: 3.13. |
+
+Problemas conocidos que este plan resuelve de paso:
+- `controller.next_var_id()` escanea el filesystem → **no es seguro con concurrencia**. El nuevo `TrialStore` asigna los ids.
+- `controller.append_results()` deriva la cabecera del CSV por llamada → corrompe columnas si cambia el conjunto de parámetros. El store lo sustituye.
+- `run_sim.py` no fija semilla de ddsim → sin ella no hay reproducibilidad ni modelo de ruido MC bien definido.
+
+---
+
+## Decisiones de física fijadas (por el usuario — no reabrir durante la implementación)
+
+### Espacio de búsqueda del primer test: rangos en torno al baseline
+
+Es un primer test del framework, no la optimización definitiva: rangos moderados centrados en los valores de `parameters_template.yaml`. Dos parámetros puramente mecánicos se fijan al baseline para reducir dimensión (dejarlos definidos en la config como `fixed:` para poder liberarlos después).
+
+| Parámetro del espacio | Rango | Baseline | Nota |
+|---|---|---|---|
+| `SiPad_WThickness` | [5, 15] mm | 10 | continuo |
+| `SiPad_dim_z` | [250, 500] mm | 370 | continuo; recuerda el acoplo `SiTarget_dim_z = 1700 − SiPad_dim_z` |
+| `sipad_fill` | [0.3, 1.0] | ≈ NLayers=22 / max | fracción → `SiPad_NLayers` |
+| `SiTarget_WThickness` | [2, 5] mm | 3.5 | continuo |
+| `SiTarget_spacing` | [8, 15] mm | 11 | continuo |
+| `sitarget_fill` | [0.5, 1.0] | ≈ NLayers=120 / max | fracción → `SiTarget_NLayers` |
+| `xy_gap_frac` | [0.1, 0.9] | ≈ 4.9 / gap_max | fracción → `SiTarget_XY_plane_gap` |
+| `SiPad_frame_gap` | **fijo** | 0.1 mm | mecánico |
+| `SiTarget_module_offset` | **fijo** | 1 mm | mecánico |
+| `SiPad_layer_gap` | **fijo** | `auto` | lo resuelve `config.resolve_auto` |
+
+Espacio efectivo: **7D**. El baseline debe caer dentro del cubo (test de sanidad en `test_geometry.py`).
+
+### Función de coste (`cost_proxy`)
+
+Coste = silicio por área + tungsteno por masa, **sumando SiTarget y SiPad**:
+
+```
+cost_proxy [k€] = A · Si_area_total [m²] + B · W_mass_total [kg]
+
+Si_area_total = Σ_detector  (nº planos de Si) · (área transversal del plano)
+W_mass_total  = ρ_W · Σ_detector  (nº capas de W) · (espesor de W) · (área transversal)
+ρ_W = 19.3 g/cm³
+```
+
+- En SiTarget cada capa tiene **dos** planos de Si (X e Y); en SiPad uno por capa. Las áreas transversales salen de las constantes resueltas del compact (obtenerlas una vez del baseline con `parse_geometry.SNDGeometry` y tratarlas como constantes del cálculo, ya que no se optimizan las dimensiones transversales).
+- Coeficientes por defecto, configurables en `conf/evaluator/snd.yaml`: `A = 30 k€/m²` (silicio grado detector), `B = 0.1 k€/kg` (tungsteno). Son órdenes de magnitud razonables; lo importante es que sean explícitos y ajustables.
+- Es una función analítica pura de los parámetros → testeable a mano sin simulación (ver F2).
+
+### Objetivos y punto de referencia del primer experimento (`conf/experiment/snd_proxy.yaml`)
+
+- Objetivos: **max `nhits_sipad`** vs. **min `cost_proxy`** (2 objetivos; el resto de métricas se registran pero no se optimizan).
+- **El trial 0 es siempre el baseline** (params del template): sirve de test de sanidad de toda la cadena y ancla el ref_point.
+- Regla del `ref_point` (peor valor aceptable por objetivo): `nhits_ref = 0.5 · nhits(baseline)`, `cost_ref = 2.0 · cost(baseline)`. El loop calcula el ref_point tras completar el trial 0 y lo persiste en el store (en resume se relee, nunca se recalcula).
+
+### Decisiones menores cerradas
+
+- `OutputLevel` de los jobs Gaudi: configurable por **variable de entorno** (`SND_OUTPUT_LEVEL`, default INFO en el payload, DEBUG si no está definida para no cambiar el uso manual actual).
+- HTCondor: `+JobFlavour = "workday"` por defecto (100 eventos caben de sobra), configurable en `conf/executor/htcondor.yaml`.
+
+---
+
+## Arquitectura propuesta
+
+### Layout del paquete
+
+```
+Optimization/mobo/
+├── pyproject.toml              # deps: torch, botorch, gpytorch, numpy, pandas, scipy,
+│                               #       hydra-core, omegaconf, plotly, matplotlib, pyyaml
+│                               # [dev]: pytest, pytest-cov, ruff, mypy, pre-commit
+├── .pre-commit-config.yaml     # ruff (lint+format), mypy
+├── README.md                   # setup del venv, comandos, arquitectura
+├── setup_env.sh                # crea .venv con --system-site-packages sobre python de key4hep
+├── conf/                       # configs Hydra
+│   ├── config.yaml             # defaults: experiment, optimizer, executor, evaluator
+│   ├── experiment/snd_proxy.yaml       # espacio de búsqueda + objetivos proxy + ref_point
+│   ├── optimizer/qnehvi.yaml           # batch_size, n_init, semillas, ajustes GP
+│   ├── executor/local.yaml
+│   ├── executor/htcondor.yaml          # flavour, request_cpus, max_retries, poll_interval
+│   └── evaluator/snd.yaml              # nevents, rutas, timeout
+├── src/mobo/
+│   ├── __init__.py
+│   ├── core/                   # === GENÉRICO: sin nada de SHiP/DD4hep ===
+│   │   ├── types.py            # Trial, TrialStatus, ParameterSpec, ObjectiveSpec, Result
+│   │   ├── search_space.py     # SearchSpace: unit-cube ↔ físico, enteros, log-scale
+│   │   ├── store.py            # TrialStore: SQLite, asignación de ids, checkpoint/resume
+│   │   ├── optimizer.py        # MOBOptimizer: ask(n)/tell(trials) sobre BoTorch
+│   │   ├── models.py           # construcción de GPs (SingleTaskGP por objetivo)
+│   │   ├── acquisition.py      # qLogNEHVI (+ Sobol para fase inicial y fallback)
+│   │   └── loop.py             # AsyncLoop: orquesta store+optimizer+executor
+│   ├── exec/
+│   │   ├── base.py             # Executor(ABC): submit(trial)→handle, poll(), cancel()
+│   │   ├── local.py            # LocalExecutor: pool de subprocesos
+│   │   └── htcondor.py         # CondorExecutor: condor_submit + sentinel files
+│   ├── ship/                   # === ESPECÍFICO DEL SND ===
+│   │   ├── evaluator.py        # SNDEvaluator: params → workdir + compact + comando payload
+│   │   ├── geometry.py         # puente a config.write_variant + reparametrización
+│   │   ├── metrics.py          # cálculo/parseo de metrics.json (proxies fase 1)
+│   │   └── payload.py          # script autónomo que corre EN el worker node
+│   ├── viz/
+│   │   ├── pareto.py           # scatter/matrix del frente de Pareto (Plotly)
+│   │   ├── progress.py         # hipervolumen vs. trial, timeline de estados
+│   │   └── report.py           # HTML autocontenido por experimento
+│   └── cli.py                  # entry points: mobo-run, mobo-status, mobo-report, mobo-resume
+└── tests/
+    ├── core/  (test_search_space.py, test_store.py, test_optimizer.py, test_loop.py)
+    ├── exec/  (test_local.py, test_htcondor_dryrun.py)
+    ├── ship/  (test_geometry.py, test_metrics.py, test_payload_smoke.py)
+    └── conftest.py             # fixtures: espacio sintético, evaluador BraninCurrin, tmp store
+```
+
+### El bucle conceptual
+
+```python
+loop = AsyncLoop(optimizer, evaluator, executor, store, cfg)
+# internamente:
+#   while not done:
+#       for trial in optimizer.ask(n_free_slots):   # condicionado a pendientes
+#           store.add(trial); executor.submit(trial)
+#       for handle in executor.poll():              # terminados desde el último poll
+#           result = evaluator.collect(handle)      # lee metrics.json / marca fallo
+#           store.complete(trial, result)
+#           optimizer.tell(trial, result)
+#       checkpoint + report incremental
+```
+
+### Diseño de los módulos core
+
+**`types.py`** — dataclasses (serializables a dict/JSON):
+- `ParameterSpec(name, kind: float|int, low, high, log: bool = False)`
+- `ObjectiveSpec(name, direction: min|max, ref_point: float)` — los objetivos activos se **seleccionan por config**, nunca hardcodeados; el evaluador siempre devuelve el dict completo de métricas y el optimizador escoge las que optimiza.
+- `Trial(trial_id: int, params: dict, unit_x: list[float], status, metrics: dict|None, error: str|None, seed: int, timestamps, workdir)`
+- `TrialStatus`: `PROPOSED → SUBMITTED → RUNNING → COMPLETED | FAILED | INFEASIBLE`
+
+**`search_space.py`** — mapa biyectivo unit-cube `[0,1]^d` ↔ parámetros físicos. Los enteros se redondean solo en la dirección unit→físico (relajación continua para el GP, práctica estándar en BoTorch). Punto clave para las restricciones acopladas del SND: soportar **parámetros derivados** definidos por el evaluador (ver reparametrización abajo), de modo que el cubo unidad sea factible casi por construcción.
+
+**`store.py`** — SQLite (fichero único por experimento, p.ej. `runs/<exp_name>/trials.db`) con una tabla `trials` (id, params JSON, unit_x JSON, status, metrics JSON, error, seed, condor_job_id, timestamps) y una tabla `meta` (config Hydra resuelta, semilla global, git SHA del repo, versión del paquete). API: `add`, `mark(status)`, `complete`, `pending()`, `completed()`, `next_id()` (transaccional → resuelve el problema de `next_var_id`), `to_dataframe()`. **El store es la única fuente de verdad para checkpoint/restart**: reanudar = recargar trials completados en el optimizador y re-adoptar (o reencolar) los pendientes.
+
+**`optimizer.py` / `models.py` / `acquisition.py`** — envoltorio fino sobre BoTorch, sin reimplementar nada:
+- Fase inicial: `n_init` puntos Sobol (`torch.quasirandom.SobolEngine`, scrambled, con semilla) — configurable, default `2·(d+1)`.
+- Modelo: un `SingleTaskGP` por objetivo con `Normalize(d)` + `Standardize(m=1)` (input/outcome transforms de BoTorch), combinados en `ModelListGP`. Ruido **inferido** por el GP (default correcto para MC con presupuesto de eventos fijo); dejar previsto en config el paso a ruido fijo por-observación (`train_Yvar` con el stderr de cada métrica) para cuando existan métricas físicas con incertidumbre estimable.
+- Adquisición: **`qLogNoisyExpectedHypervolumeImprovement` (qLogNEHVI)** de `botorch.acquisition.multi_objective.logei` — es la elección estado-del-arte para MOBO ruidoso y soporta nativamente lo que necesitamos: batches (q>1) y **asincronía vía `X_pending`** (los puntos en vuelo condicionan la adquisición y evitan proponer duplicados). `ref_point` desde config o anclado al trial baseline según el experimento (ver «Decisiones de física fijadas»). Optimización con `optimize_acqf` (`num_restarts=10, raw_samples=512`, `sequential=True` para q>1).
+- Convención interna: **todo se maximiza**; los objetivos `min` se niegan en la frontera del optimizador (documentarlo en un solo sitio).
+- Fallback: si el ajuste del GP o la optimización de la adquisición lanza excepción, loguear y caer a un punto Sobol (el loop nunca se detiene por un fallo numérico).
+- Trials fallidos: **se excluyen del GP** en fase inicial (simple y correcto). Modelar la probabilidad de fallo con un clasificador queda como fase avanzada.
+
+**`loop.py`** — bucle asíncrono *steady-state*: mantiene `max_in_flight` trials en vuelo; cada vez que se libera un slot pide 1 (o hasta `batch_ask`) puntos nuevos condicionados a los pendientes. Criterios de parada: `max_trials`, presupuesto de tiempo, o estancamiento del hipervolumen (opcional). Manejo de señales (SIGINT/SIGTERM) → checkpoint limpio y instrucciones de resume.
+
+### Executors
+
+**`base.py`** — contrato mínimo:
+```python
+class Executor(ABC):
+    def submit(self, trial: Trial, cmd: list[str], workdir: Path) -> Handle: ...
+    def poll(self) -> list[tuple[Handle, ExitInfo]]: ...   # no bloqueante
+    def cancel(self, handle) -> None: ...
+```
+El executor **no sabe nada de física**: recibe un comando y un workdir. La detección de fin es por **sentinel files** (`DONE` / `FAILED` escritos por el payload como último acto), no por parseo de `condor_q` — es lo robusto en AFS/EOS y funciona igual en local y en Condor. `condor_q`/`condor_history` se usan solo como diagnóstico secundario (detectar jobs desaparecidos/held → timeout → reintento).
+
+**`local.py`** — `subprocess.Popen` con límite de procesos concurrentes. Sirve para debugging y para los tests de integración. Ejecuta *exactamente el mismo payload* que Condor.
+
+**`htcondor.py`** — genera por trial un `job.sub` + wrapper `.sh` (plantillas en el paquete, inspiradas en `simulation/run_script/generic_condor_multiplePG.sh`):
+- El wrapper hace `source /afs/.../key4ship_PoC/init_key4ship.sh` y ejecuta `python payload.py --workdir <dir>` (todo por AFS, sin transferencia de ficheros; los workdirs viven bajo `Optimization/mobo/runs/<exp>/trials/t00042/`).
+- `condor_submit` vía `subprocess` (no el binding python de htcondor, para no añadir dependencia frágil); guardar `ClusterId` en el store.
+- Config: `+JobFlavour`, `request_cpus`, `request_memory`, `max_retries` (reintento con la misma semilla → distingue fallo transitorio de fallo determinista de la geometría), `timeout_hours`.
+- `RUN_LOCAL=1` en el wrapper (como en los scripts existentes) → permite testear el camino Condor completo sin scheduler.
+
+### Capa SHiP (`ship/`)
+
+**`geometry.py` — reparametrización (decisión de diseño importante).** No optimizar `SiPad_NLayers`/`SiTarget_NLayers` directamente (sus cotas `*_max` dependen de otros parámetros → cubo unidad infactible en gran parte). En su lugar el espacio de búsqueda usa **fracciones de llenado**:
+- `sipad_fill ∈ [0.3, 1.0]` → `SiPad_NLayers = max(1, floor(sipad_fill · SiPad_NLayers_max(params)))`
+- ídem `sitarget_fill`, y `xy_gap_frac ∈ [0,1]` → `SiTarget_XY_plane_gap = xy_gap_frac · SiTarget_XY_plane_gap_max(params)`
+
+`SiPad_NLayers_max` etc. se calculan replicando las fórmulas del template (líneas ~119–144 de `SND_compact_template.xml`) en una función pura `derived_limits(params) -> dict` con test que la valida contra el parser real (ver cross-checks). Así el cubo unidad es factible por construcción, y `config.write_variant(constants, path, dry_run=True)` queda como **gate final** antes de encolar: si aun así falla, el trial se marca `INFEASIBLE` sin gastar CPU y se devuelve al optimizador como fallo (excluido del GP). Importar `config.py` por ruta igual que hace `controller._load_module` (evita el PYTHONPATH de key4hep).
+
+**`evaluator.py`** — implementa la interfaz genérica:
+```python
+class SNDEvaluator:
+    def prepare(self, trial) -> tuple[cmd, workdir]  # render compact + params.yaml + seed
+    def collect(self, trial) -> Result               # lee metrics.json o clasifica el fallo
+```
+`Result.metrics` es el dict completo, p. ej. `{"nhits_sipad": …, "cost_proxy": …, "n_channels": …, "cpu_time_s": …, "wall_time_s": …}`. Qué subconjunto se optimiza lo decide `conf/experiment/*.yaml`.
+
+**`payload.py`** — script **autocontenido** (ejecutable con el python de key4hep del worker, sin importar el paquete mobo — solo stdlib+yaml) que replica la secuencia de `controller.run_variant()`:
+1. lee `trial.yaml` del workdir (params, semilla, nevents, rutas),
+2. ddsim con steering derivado de `run_sim.py::STEERING_TEMPLATE` **añadiendo `random.seed`** (nuevo argumento; cambio pequeño en `run_sim.py` o steering propio del payload),
+3. `k4run job1_overlay.py` / `job4_tracking.py` / `job5_rntuple.py` con `SND_COMPACT`/`INPUT_FILE` como hace el controller, y `OutputLevel` vía `SND_OUTPUT_LEVEL` (ver «Decisiones menores cerradas»; los DEBUG logs de job4 son inaceptables a escala),
+4. calcula métricas proxy y escribe `metrics.json` + sentinel `DONE`; ante cualquier excepción escribe `FAILED` con el paso y las últimas líneas del log correspondiente.
+
+**`metrics.py`** — Fase proxy:
+- `nhits_sipad`: como `compute_fom.py` (RNTupleReader sobre `ShipHits.root`).
+- `cost_proxy`: la fórmula fijada en «Decisiones de física fijadas» (A·área de Si + B·masa de W, SiTarget+SiPad). Analítica pura → sirve también para tests.
+- `n_channels`: nº de canales de lectura (analítico).
+- `cpu_time_s` / `wall_time_s`: medidos en el payload.
+El diseño deja hueco explícito para las métricas físicas futuras (eficiencia/resolución desde `ACTSTracks` en `ShipHits.root` — `job5_rntuple.py` ya las exporta), que serán un módulo más que añade claves al mismo `metrics.json`.
+
+### Visualización (`viz/`) y CLI
+
+- `pareto.py`: scatter 2D/3D del frente (Plotly), matriz de pares para >3 objetivos, coordenadas paralelas parámetros→objetivos.
+- `progress.py`: hipervolumen dominado vs. nº de trial (con `botorch.utils.multi_objective.hypervolume`), timeline de estados, tasa de fallos.
+- `report.py`: HTML autocontenido en `runs/<exp>/report.html`, regenerado tras cada `tell`.
+- `cli.py` (entry points en pyproject):
+  - `mobo-run experiment=snd_proxy executor=htcondor` (Hydra CLI; crea `runs/<exp>/` con config resuelta),
+  - `mobo-resume runs/<exp>` (reanuda del store),
+  - `mobo-status runs/<exp>` (tabla de trials + hipervolumen actual),
+  - `mobo-report runs/<exp>`.
+
+### Reproducibilidad
+
+- Semilla global en config → semillas derivadas deterministas por trial (`seed_trial = hash(seed_global, trial_id)`), usadas en: Sobol, torch (fit del GP y optimize_acqf), y **ddsim** (`random.seed` en el steering).
+- El store guarda config Hydra resuelta + git SHA + versiones de paquete (`torch.__version__`, `botorch.__version__`).
+- `runs/<exp>/` añadido a `.gitignore` (junto a lo que ya está ignorado de Optimization).
+
+---
+
+## Roadmap por fases (con tests y cross-checks por fase)
+
+> Regla general: cada fase termina con `pytest` verde, `ruff check` y `mypy src/mobo/core src/mobo/exec` limpios (la capa `ship/` puede quedar fuera de mypy estricto por los imports dinámicos de ROOT/config.py). No se avanza de fase sin sus criterios de aceptación.
+
+### Fase 0 — Entorno y esqueleto (≈ medio día)
+1. `setup_env.sh`: source de `init_key4ship.sh` → `python3 -m venv --system-site-packages .venv` → `pip install -e ".[dev]"`. Torch **CPU-only** (`--index-url https://download.pytorch.org/whl/cpu`) — lxplus no tiene GPU y el wheel CPU es mucho más ligero. El venv va en `Optimization/mobo/.venv/` por defecto (ver tabla final: override `MOBO_VENV_DIR` solo si el quota de AFS no lo admite).
+2. `pyproject.toml`, estructura de directorios, `pre-commit`, configs Hydra mínimas.
+3. Smoke test `tests/test_env.py`: `import torch, botorch, gpytorch, yaml` y (marcado `@pytest.mark.key4hep`, skippable) `import ROOT`.
+
+**Aceptación F0**: `pip install -e .` funciona en lxplus con el entorno key4hep cargado; `pytest -m "not key4hep"` verde en un entorno cualquiera; `mobo-run --help` imprime la ayuda de Hydra.
+
+### Fase 1 — Core del optimizador con funciones sintéticas (≈ 1 día)
+1. `types.py`, `search_space.py`, `store.py`, `models.py`, `acquisition.py`, `optimizer.py` (ask/tell puro, sin executor).
+2. Evaluador sintético de test: `BraninCurrin` de `botorch.test_functions.multi_objective` (2 objetivos, d=2) + una variante con ruido gaussiano y con fallos aleatorios inyectados (p=0.1).
+
+**Tests/cross-checks F1**:
+- `test_search_space.py`: round-trip unit↔físico (hipótesis con puntos aleatorios), enteros correctamente redondeados y dentro de rango, log-scale monótono.
+- `test_store.py`: `next_id` sin huecos ni duplicados bajo llamadas concurrentes (threads); persistencia: cerrar/reabrir el store reproduce exactamente los trials; `to_dataframe` con conjunto de parámetros estable.
+- `test_optimizer.py` — **el cross-check central de la fase**: en BraninCurrin con semilla fija, tras 8 Sobol + 24 qLogNEHVI el hipervolumen dominado supera al de 32 puntos Sobol puros (mismo presupuesto) en ≥3 semillas de 4. Test lento pero acotado (~1–2 min CPU); marcar `@pytest.mark.slow`.
+- `test_optimizer.py::test_pending`: `ask(q=2)` con 2 puntos pendientes no repropone los pendientes (distancia mínima > umbral).
+- `test_optimizer.py::test_failures`: con 10 % de trials fallidos, el loop sintético completa y los fallidos no entran en el GP (inspeccionar `model.train_inputs`).
+- Checkpoint/restart determinista: correr 20 trials sintéticos, matar, `resume`, comprobar que el estado (nº trials, hipervolumen) coincide con una ejecución continua con las mismas semillas *hasta el punto del corte* (tras el corte no se exige igualdad bit a bit, sí que el resume no duplique ids ni pierda trials).
+
+**Aceptación F1**: cross-check de hipervolumen vs. Sobol pasa; loop síncrono sintético `ask→evaluate→tell` corre 50 trials en <5 min.
+
+### Fase 2 — Evaluador SND + executor local, end-to-end con proxies (≈ 1 día)
+1. `ship/geometry.py`: `derived_limits()`, reparametrización, gate `write_variant(dry_run=True)`.
+2. `ship/metrics.py` (proxies analíticos + lectura de `ShipHits.root`), `ship/payload.py`, `ship/evaluator.py`.
+3. Cambio mínimo en `Optimization/Simulation/run_scripts/run_sim.py`: argumento `--seed` que inyecta `random.seed` en el steering (retrocompatible: default = comportamiento actual).
+4. `exec/local.py` + `loop.py` (el bucle asíncrono ya, aunque el executor sea local).
+5. `conf/experiment/snd_proxy.yaml`: exactamente el espacio 7D, los objetivos y la regla de ref_point de la sección «Decisiones de física fijadas» (trial 0 = baseline, ref_point anclado a él y persistido).
+
+**Tests/cross-checks F2**:
+- `test_geometry.py::test_derived_limits_vs_parser` — **cross-check clave**: para el baseline y las variantes de `variants.yaml`, `derived_limits()` reproduce los `*_max` que devuelve el parser real (`config._resolve_constants` / `parse_geometry.SNDGeometry`) con tolerancia estricta. Marcado `key4hep`.
+- `test_geometry.py::test_regression_baseline`: `geometry.py` renderiza la variante baseline y el XML es idéntico (modulo la línea de nombre) al que produce `make_variants.py` hoy — garantiza que no rompemos la generación existente.
+- `test_geometry.py::test_infeasible_rejected`: params deliberadamente inválidos (p.ej. `SiPad_dim_z=200` con `SiTarget_NLayers=120` heredado) → `INFEASIBLE` vía dry-run gate, sin excepción.
+- `test_metrics.py`: `cost_proxy` contra 2–3 valores calculados a mano con la fórmula A·área+B·masa (incluido el factor 2 planos de Si por capa en SiTarget); monotonía (más capas ⇒ más coste); `n_channels` ídem.
+- `test_payload_smoke.py` (marcado `slow+key4hep`): payload completo sobre el baseline con **10 eventos** → `metrics.json` válido y `DONE`. Cross-check de continuidad: `nhits_sipad` del payload == lo que daría la cadena del `controller.py` con mismos eventos y semilla.
+- Reproducibilidad MC: dos ejecuciones del payload con la misma semilla ⇒ `nhits_sipad` idéntico; semillas distintas ⇒ (casi seguro) distinto.
+- **Smoke end-to-end**: `mobo-run experiment=snd_proxy executor=local optimizer.n_init=2 optimizer.max_trials=4 evaluator.nevents=10` termina, el store tiene 4 trials `COMPLETED` (o `INFEASIBLE` justificado) y `report.html` existe. Este comando queda documentado en el README como test de humo manual.
+
+**Aceptación F2**: smoke end-to-end local en <~30 min; los cross-checks de geometría (limits vs. parser, regresión del baseline, paridad con controller) verdes.
+
+### Fase 3 — Executor HTCondor asíncrono (≈ 1 día)
+1. `exec/htcondor.py` + plantillas `job.sub`/wrapper. Polling por sentinels con `poll_interval` configurable; `condor_q` como watchdog (job desaparecido sin sentinel ⇒ `FAILED(lost)` tras gracia; held ⇒ cancel+retry).
+2. Reintentos: `max_retries` con la misma semilla; agotados ⇒ `FAILED` definitivo.
+3. Robustez del loop: latencia AFS en la visibilidad de sentinels (releer con reintento), `mobo-resume` re-adopta jobs en vuelo (guarda ClusterId) o los reencola si murieron.
+
+**Tests/cross-checks F3**:
+- `test_htcondor_dryrun.py`: generación de `job.sub`/wrapper contra golden files (sin submit); parseo del ClusterId desde una salida grabada de `condor_submit`; máquina de estados de reintentos con un executor mockeado (sentinels escritos a mano en tmpdir: DONE, FAILED, ninguno+timeout).
+- Cross-check `RUN_LOCAL=1`: el wrapper Condor ejecutado localmente produce el mismo `metrics.json` (misma semilla) que el LocalExecutor — valida que el camino Condor no cambia la física.
+- **Validación manual en el cluster real** (documentada como checklist en el README, no automatizable en pytest): (a) 1 job Condor con 10 eventos completa y el loop lo recoge; (b) run con `max_in_flight=4`, `max_trials=8`: los 4 primeros van en paralelo, cada slot liberado dispara un ask condicionado a pendientes (verificar en el log del loop que `X_pending` no está vacío); (c) matar el proceso del loop con jobs en vuelo, `mobo-resume`, comprobar que los recoge sin duplicar ids.
+
+**Aceptación F3**: checklist manual de Condor completada; tests de dry-run verdes; un run nocturno de ~20 trials con 100 eventos termina sin intervención.
+
+### Fase 4 — Visualización, informe y pulido (≈ medio día)
+1. `viz/` completo + `mobo-status`/`mobo-report`.
+2. README de `Optimization/mobo/` (setup, comandos, arquitectura, cómo añadir un objetivo nuevo, cómo portar a otro detector: implementar `Evaluator` + config).
+3. Pasada final: `ruff`, `mypy`, pre-commit instalado, cobertura de `core/` ≥ 80 %.
+
+**Tests/cross-checks F4**:
+- `viz` testeado sobre un store sintético fixture (genera HTML sin excepción; hipervolumen calculado coincide con `botorch.utils.multi_objective.hypervolume` llamado a mano en el test).
+- Cross-check de dominancia: los puntos marcados como Pareto-óptimos por `pareto.py` coinciden con `is_non_dominated` de BoTorch.
+- Revisión de que **ningún import de `ship/` aparece en `core/`, `exec/` ni `viz/`** (test de arquitectura con `grep`/importlib: `test_no_ship_imports_in_core`).
+
+### Fase 5 — Diferido / avanzado (fuera del alcance de estos 2 días; dejar huecos preparados)
+- **Métricas físicas reales**: eficiencia y resolución de tracking desde `ACTSTracks` en `ShipHits.root` (matching MC), con stderr por trial → pasar los GPs a ruido fijo por-observación (`train_Yvar`). El hueco ya existe: `metrics.json` extensible + config de objetivos.
+- Modelado de factibilidad aprendida (clasificador GP sobre fallos de simulación) y restricciones de salida (`constraints` en qNEHVI).
+- Multi-fidelidad (nº de eventos como fidelidad; qMultiFidelity o simple promoción por etapas).
+- Optimizar también meta-parámetros del tracker (los knobs hardcodeados de `job4_tracking.py`).
+- Migración opcional a Ax como capa de gestión si el bookkeeping propio se queda corto.
+
+---
+
+## Cambios fuera del paquete nuevo (mínimos, todos dentro de `Optimization/`)
+
+| Fichero | Cambio |
+|---|---|
+| `Optimization/Simulation/run_scripts/run_sim.py` | Añadir `--seed` → `random.seed` en el steering (retrocompatible). |
+| `Optimization/mobo/.gitignore` (nuevo) | `runs/`, `.venv/`, `__pycache__/`, `*.egg-info/` — así los productos quedan ignorados sin tocar el `.gitignore` de la raíz del repo. |
+| `Optimization/README.md` | Párrafo señalando que el loop de optimización vive en `Optimization/mobo/` y que `controller.py` sigue siendo la herramienta de variantes manuales. |
+| `Optimization/Analysis/job4_tracking.py` | (Opcional, recomendado) `OutputLevel` configurable por env var para no generar logs DEBUG gigantes en producción. |
+
+El venv (`Optimization/mobo/.venv/`) y los workdirs (`Optimization/mobo/runs/<exp>/trials/tNNNNN/`) viven dentro del paquete. Si el quota de AFS no admite el venv (~2–3 GB con torch CPU), `setup_env.sh` debe fallar con un mensaje claro sugiriendo `MOBO_VENV_DIR` como override — pero el default es dentro de `Optimization/mobo/`.
+
+`controller.py`, `config.py`, `make_variants.py` y los jobs de análisis **no se modifican** en su comportamiento actual — el test de regresión del baseline (F2) lo garantiza.
+
+## Verificación global final (definition of done)
+
+1. `pytest` completo (incl. `slow`, `key4hep`) verde en lxplus con el venv.
+2. Smoke local: 4 trials × 10 eventos con `executor=local` → store consistente + report.
+3. Run real en HTCondor: ≥20 trials × 100 eventos desatendido durante una noche; `mobo-status` muestra frente de Pareto con ≥5 puntos no dominados; hipervolumen no decreciente; tasa de `FAILED` < 20 % y cada fallo con causa clasificada en el store.
+4. Kill + `mobo-resume` en mitad del run real sin pérdida ni duplicación de trials.
+5. `test_no_ship_imports_in_core` verde (portabilidad a otros detectores garantizada por construcción).

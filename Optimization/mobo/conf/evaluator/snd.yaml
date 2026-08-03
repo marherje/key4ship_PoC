@@ -1,0 +1,23 @@
+# How one SND variant is evaluated.
+nevents: 100
+# job4_tracking.py logs at DEBUG when run by hand; at scale that is hundreds of
+# MB per trial, so the payload sets SND_OUTPUT_LEVEL from here.
+output_level: INFO
+# Interpreter for the payload. `python3` resolves to the venv locally and to the
+# key4hep python on a worker node after init_key4ship.sh — both have ROOT.
+python: python3
+
+# Proxy cost: A x (silicon area) + B x (tungsten mass), summed over SiTarget and
+# SiPad. Order-of-magnitude figures; the trade-off the optimizer finds follows
+# directly from their ratio, so they are meant to be edited.
+cost_model:
+  si_per_m2: 30.0     # k€ per m² of detector-grade silicon
+  w_per_kg: 0.1       # k€ per kg of tungsten
+  rho_w_g_cm3: 19.3
+
+# Paths into the existing project. Null means "derive from the repo root", which
+# is what you want unless you are testing a modified chain.
+geometry_dir: null
+analysis_dir: null
+run_sim: null
+parse_geometry: null

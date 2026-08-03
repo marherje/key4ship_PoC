@@ -1,0 +1,14 @@
+# qLogNoisyExpectedHypervolumeImprovement over independent SingleTaskGPs.
+n_init: 0              # 0 -> 2*(d+1) Sobol points before the GP takes over
+batch_size: 1          # points per ask; 1 keeps the loop maximally reactive
+min_observations: 3    # below this a GP is noise; keep drawing Sobol
+num_restarts: 10       # optimize_acqf
+raw_samples: 512
+mc_samples: 128        # qMC samples of the acquisition
+sequential: true       # greedy q-batch selection
+prune_baseline: true   # drop dominated baseline points from X_baseline
+# Per-observation noise from <metric>_stderr instead of an inferred homoscedastic
+# term. Off for the proxy phase (a hit count from one run has no stderr); this is
+# the switch to flip once the physics metrics arrive with uncertainties.
+fixed_noise: false
+seed: ${seed}

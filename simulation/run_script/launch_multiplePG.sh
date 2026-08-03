@@ -35,9 +35,9 @@ pairs=(
 
 mkdir -p steer data log
 
-# Apply the geometry parametrization (parameters.yaml -> SND_compact.xml)
-# before simulating, so the samples always match the declared geometry.
-python3 ../geometry/config.py || { echo "ERROR: geometry config failed"; exit 1; }
+# This script always simulates the committed baseline geometry
+# (simulation/geometry/SND_compact.xml). Geometry variants are generated and
+# simulated by Optimization/ instead; see Optimization/README.md.
 
 local=$PWD
 steer_path="${local}/steer"

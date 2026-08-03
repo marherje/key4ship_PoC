@@ -1,0 +1,11 @@
+# Everything this package produces stays here, so the repo-root .gitignore
+# does not have to know about the optimizer at all.
+.venv/
+runs/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/

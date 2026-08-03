@@ -1,0 +1,27 @@
+# Top-level Hydra config. Pick the pieces with, e.g.
+#     mobo-run experiment=snd_proxy executor=htcondor
+# and override anything with dotted paths:
+#     mobo-run evaluator.nevents=10 experiment.loop.max_trials=4
+defaults:
+  - _self_
+  - experiment: snd_proxy
+  - optimizer: qnehvi
+  - executor: local
+  - evaluator: snd
+
+# Seeds everything derived: the Sobol design, the GP fits, the acquisition
+# optimizer and each trial's Geant4 run (seed_trial = hash(seed, trial_id)).
+seed: 0
+
+# Where the run lives: store, trial directories, report. Null means
+# Optimization/mobo/runs/<experiment name>.
+run_dir: null
+
+log_level: INFO
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

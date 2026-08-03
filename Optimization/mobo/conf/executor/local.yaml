@@ -1,0 +1,5 @@
+# Subprocesses on this machine. For debugging and smoke tests: the payload is
+# the same one Condor runs.
+kind: local
+max_parallel: 2
+timeout_hours: 6.0

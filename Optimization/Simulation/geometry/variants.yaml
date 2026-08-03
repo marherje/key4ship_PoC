@@ -1,0 +1,27 @@
+# ---------------------------------------------------------------------------
+# Variant set for make_variants.py. Each entry inherits every parameter of the
+# base file and overrides only what it lists; one compact file per entry is
+# written to variants/<name>.xml.
+#
+#     python3 make_variants.py variants.yaml [--dry-run] [--only NAME]
+#
+# Overriding a key that does not exist in the base is an error (typo guard).
+# Remember that NLayers must stay within the derived *_max of the template:
+# SiPad_NLayers <= floor(SiPad_dim_z/SiPad_LayerThickness), and likewise for
+# SiTarget, so a shorter dim_z needs fewer layers.
+# ---------------------------------------------------------------------------
+
+base: parameters_template.yaml
+
+variants:
+  # Thinner tungsten in the calorimeter: thinner layers fit in the same 370 mm.
+  thin_W:
+    SiPad_WThickness: 5
+    SiPad_NLayers: 32
+
+  # Shorter calorimeter; the SiTarget grows to keep the 1700 mm total, so it
+  # takes more layers at the same spacing.
+  short_sipad:
+    SiPad_dim_z: 200
+    SiPad_NLayers: 12
+    SiTarget_NLayers: 136

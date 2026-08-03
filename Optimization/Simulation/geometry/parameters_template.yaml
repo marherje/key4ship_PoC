@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------------------
+# Input parameters for the SND geometry template.
+#
+# Every key under `constants:` matches one XnameX placeholder of the
+# <!-- Input parameters --> block of SND_compact_template.xml, one to one:
+# a missing key, or a key that is not a placeholder, is an error — so a typo
+# can never slip through silently.
+#
+# Edit this file and run (from this directory):
+#     python3 config.py                 # -> variants/<name>.xml
+#     python3 config.py --dry-run       # validate only, write nothing
+#     python3 config.py --name thin_W   # override the output name
+#
+# SND_compact.xml (the committed baseline) is never touched; every run writes a
+# new compact file. To generate several variants at once, see make_variants.py.
+#
+# Lengths are in mm; layer counts are integers. A value given as a string is
+# passed to the XML verbatim, so DD4hep expressions ("3.5*mm+1*mm") also work.
+#
+# NLayers and XY_plane_gap are checked against the *_max constants derived in
+# the template (floor(dim_z/LayerThickness) and the W-to-W spacing budget);
+# exceeding one of them is a hard error and nothing is written.
+#
+# SiPad_layer_gap accepts the special value `auto`. The plugin packs the SiPad
+# layers contiguously and centres them in the envelope, so with a fixed gap the
+# leftover of SiPad_dim_z ends up as a void at both ends. `auto` sizes that air
+# slice instead so that SiPad_NLayers layers span SiPad_dim_z exactly and the
+# sensitive planes come out equidistant, i.e. NLayers becomes the real knob for
+# the sampling pitch. Give it a number to fix the gap by hand (1e-6 = none; Geant4
+# rejects a slice of exactly zero thickness).
+#
+# The values below are the defaults, i.e. they reproduce the baseline geometry.
+# ---------------------------------------------------------------------------
+
+name: baseline           # -> variants/baseline.xml
+
+constants:
+  SiPad_WThickness:        10      # tungsten absorber per layer
+  SiPad_layer_gap:       auto      # closes the layer: chip -> W of the next one;
+                                   # `auto` -> equidistant layers
+  SiPad_frame_gap:        0.1      # W -> carbon frame, essentially flush
+  SiPad_dim_z:            370      # total SiPad envelope along z
+  SiPad_NLayers:           22      # <= SiPad_NLayers_max
+
+  SiTarget_WThickness:      3.5
+  SiTarget_module_offset:   1      # from W to the Si planes
+  SiTarget_spacing:        11      # between W planes
+  SiTarget_XY_plane_gap:    4.9    # X plane -> Y plane; <= SiTarget_XY_plane_gap_max
+  SiTarget_NLayers:       120      # <= SiTarget_NLayers_max

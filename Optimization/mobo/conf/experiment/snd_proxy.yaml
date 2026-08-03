@@ -1,0 +1,48 @@
+# First experiment: validate the whole loop on proxy objectives.
+#
+# Maximize the SiPad hit count against a proxy cost. Both are cheap and
+# well-understood, which is the point — the physics objectives (tracking
+# efficiency and resolution from ACTSTracks) plug into the same machinery later
+# by adding keys to metrics.json and naming them here.
+name: snd_proxy
+
+# Ranges around the committed baseline: this is a test of the framework, not
+# the final optimization. The baseline must fall inside the box (asserted in
+# tests/ship/test_geometry.py), since trial 0 reproduces it exactly.
+parameters:
+  SiPad_WThickness:    { low: 5.0,  high: 15.0 }   # mm, baseline 10
+  SiPad_dim_z:         { low: 250,  high: 500 }    # mm, baseline 370
+  #  SiTarget_dim_z = 1700 mm - SiPad_dim_z, so this one moves both detectors
+  sipad_fill:          { low: 0.3,  high: 1.0 }    # -> SiPad_NLayers
+  SiTarget_WThickness: { low: 2.0,  high: 5.0 }    # mm, baseline 3.5
+  SiTarget_spacing:    { low: 8.0,  high: 15.0 }   # mm, baseline 11
+  sitarget_fill:       { low: 0.5,  high: 1.0 }    # -> SiTarget_NLayers
+  xy_gap_frac:         { low: 0.1,  high: 1.0 }    # -> SiTarget_XY_plane_gap
+# The baseline is at 1.0 for the last two (its XY gap already uses the whole
+# budget, and its layers already fill the envelope), so those two are scanned
+# downward from it: the range ends at the baseline rather than stopping short
+# of it. Being exactly at a limit has to work, and does — see
+# Geometry._length_within for the rendering detail that makes it so.
+
+# Held at the baseline to keep the space at 7D. Purely mechanical quantities;
+# freeing one is a two-line change here, no code.
+fixed:
+  SiPad_frame_gap: 0.1
+  SiTarget_module_offset: 1
+  SiPad_layer_gap: auto    # config.py sizes it so the layers come out equidistant
+
+# The optimized subset of metrics.json. Everything else is still recorded.
+# ref_from_baseline: the worst value still worth having, as a multiple of what
+# the baseline scores — anchored once trial 0 completes, then never recomputed.
+objectives:
+  - { name: nhits_sipad, direction: max, ref_from_baseline: 0.5 }
+  - { name: cost_proxy,  direction: min, ref_from_baseline: 2.0 }
+
+loop:
+  max_trials: 20
+  max_in_flight: 4
+  batch_ask: 1
+  poll_interval: 30
+  max_retries: 1
+  baseline_first: true       # trial 0 is the baseline geometry
+  time_budget_hours: null

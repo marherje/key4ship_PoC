@@ -1,0 +1,42 @@
+# One HTCondor job per trial. Nothing is transferred: the payload, the geometry,
+# the analysis chain and the trial directory are all on AFS and visible from the
+# worker node.
+kind: htcondor
+
+# 100 events fit comfortably; "workday" (8 h) leaves room for a slow node
+# without landing in the long queues.
+flavour: workday
+universe: vanilla
+request_cpus: 1
+request_memory: 2GB
+request_disk: 4GB
+should_transfer_files: "YES"
+
+# The job writes its results directly into an AFS directory, which needs the
+# submitter's kerberos credential forwarded to the worker. Without it every
+# trial fails on its first write. Requires a valid ticket on the submit host
+# (`klist`; renew with `kinit`).
+send_credential: true
+
+# How often the loop looks for finished trials. Sentinel files on AFS are cheap
+# to check, but there is no point checking faster than a job can finish.
+poll_interval: 60
+
+# Watchdog. A job that has left the queue without writing a sentinel is lost
+# (evicted, node crash); the grace period covers AFS taking its time to show a
+# file written elsewhere.
+watchdog_interval: 120
+grace_seconds: 600
+timeout_hours: 12
+submit_retries: 3
+
+# Run the generated wrapper as a local subprocess instead of submitting it.
+# The whole Condor path except condor_submit itself, testable without a
+# scheduler (the project's own scripts use RUN_LOCAL=1 the same way).
+run_local: false
+
+# Site-specific submit lines, verbatim. e.g. {"+AccountingGroup": "\"group_u_XX\""}
+extra_submit: {}
+
+# Defaults to <repo>/init_key4ship.sh.
+init_script: null

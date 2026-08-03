@@ -35,25 +35,16 @@ Casos configurados por defecto (en `launch_multiplePG.sh`):
 Para añadir un par nuevo: una línea más en el array `pairs` de
 `launch_multiplePG.sh` (formato `"particula1:E1:particula2:E2"`).
 
-## Parametrización de la geometría
+## Geometría
 
-La geometría se controla desde `simulation/geometry/parameters.yaml` (número
-de capas y posición z de cada detector; `auto` = colocación derivada, los
-detectores se apilan solos). Para aplicarla:
+Este script simula siempre la geometría baseline commiteada,
+`simulation/geometry/SND_compact.xml`. Como la simulación y la reconstrucción
+leen el mismo XML, no hay que tocar ningún steering ni job de Gaudi.
 
-```bash
-cd simulation/geometry
-python3 config.py            # parchea SND_compact.xml (backup en .bak)
-python3 config.py --dry-run  # ver los cambios sin escribir
-python3 config.py --show     # resumen de la geometría actual
-```
-
-`config.py` valida antes de escribir (solapes entre detectores, gun aguas
-arriba) y `launch_multiplePG.sh` lo invoca automáticamente al inicio, así que
-las muestras siempre se producen con la geometría declarada en el YAML. Como
-simulación y reconstrucción leen el mismo XML, no hay que tocar ningún
-steering ni job de Gaudi. Tras cambiar la geometría hay que re-simular (los
-datos existentes dejan de ser consistentes).
+Para explorar geometrías alternativas (variar número de capas, espesor del W,
+tamaño del envelope…) está `Optimization/`, que renderiza variantes a partir de
+`Optimization/Simulation/geometry/SND_compact_template.xml` y las simula y
+analiza una por una sin tocar la baseline. Ver `Optimization/README.md`.
 
 ## Estructura de salida
 

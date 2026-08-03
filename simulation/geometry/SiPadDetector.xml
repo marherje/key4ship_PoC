@@ -34,9 +34,21 @@
     <position x="0" y="0" z="SiPad_z_position"/>
   </envelope>
 
-  <!-- Layers 2-4: W(1.40x) + W(4.20x) + CF + Cu + glue + Si(650um) + glue + Cu + PCB + chip + gap -->
+  <!-- Layers 2-4: W(1.40x) + W(4.20x) + air + CF + Cu + glue + Si(650um) + glue + Cu + PCB + chip + gap
+
+       SiPad_frame_gap is the air between the absorber and the carbon frame,
+       and SiPad_layer_gap the one closing the layer, from the chip to the W of
+       the next one. The plugin packs the layers contiguously and centres them
+       in the envelope, so it is the second of the two that takes up whatever
+       SiPad_dim_z is left over by the material budget: config.py sizes it
+       (SiPad_layer_gap: auto) so that NLayers layers span dim_z exactly and
+       the sensitive planes come out equidistant. When it is not
+       needed it shrinks to 1e-6 mm rather than to zero: the slice has to stay
+       in the geometry, both because Geant4 rejects a box of null extent and
+       because the index of the sensitive slice behind it would shift. -->
   <layer repeat="SiPad_NLayers" vis="EcalVis">
     <slice material="TungstenDens1910" thickness="SiPad_WThickness"   vis="TungstenVis"/>
+    <slice material="Air"             thickness="SiPad_frame_gap"          vis="AirVis"/>
     <slice material="CarbonFiber"     thickness="SiPad_CFThickness"        vis="CFVis"/>
     <slice material="Copper"          thickness="SiPad_KaptonThickness"    vis="CuVis"/>
     <slice material="Air"             thickness="SiPad_GlueThickness_kap"  vis="AirVis"/>
@@ -45,7 +57,7 @@
     <slice material="Copper"          thickness="SiPad_KaptonThickness"    vis="CuVis"/>
     <slice material="PCB"             thickness="SiPad_PcbThickness"       vis="PCBVis"/>
     <slice material="Air"             thickness="SiPad_ChipThickness"      vis="AirVis"/>
-    <slice material="Air"             thickness="SiPad_layer_gap"      vis="AirVis"/>
+    <slice material="Air"             thickness="SiPad_layer_gap"         vis="AirVis"/>
   </layer>
 
 </detector>

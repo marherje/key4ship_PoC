@@ -358,6 +358,20 @@ def extract_z_from_geometry(compact_xml, config):
 
     walk(mgr.GetTopNode())
 
+    # A group with no layers means the geometry does not match what the config
+    # asks for -- typically a `slice_index` that no longer points at the
+    # sensitive slice, because slices were added to or removed from a layer.
+    # Fail here: the display would otherwise open perfectly happily and just
+    # draw that detector empty, which looks like "no hits in this event".
+    empty = sorted(r["entry"]["name"] for r in rules.values() if not r["zs"])
+    if empty:
+        raise SystemExit(
+            "[Geometry] ERROR: no se ha encontrado ninguna capa para: %s\n"
+            "  geometria: %s\n"
+            "  Revisa el `slice_index` de esas entradas en el JSON de configuracion:\n"
+            "  tiene que ser el indice del slice sensible en esta geometria, y cambia\n"
+            "  si se añaden o quitan slices a una capa." % (", ".join(empty), compact_xml))
+
     for r in rules.values():
         zs = sorted(set(r["zs"]))
         r["entry"]["layers_z_cm"] = zs
