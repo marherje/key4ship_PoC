@@ -49,7 +49,9 @@ PDG_INFO = {
     22:   ("gamma", (1.00, 0.90, 0.30)),   # photon — yellow
     321:  ("K",     (0.75, 0.30, 0.90)),   # charged kaon — purple
 }
-PDG_FALLBACK = ("other", (0.55, 0.55, 0.55))
+# White, not grey: the neutron entry above is already grey, and an unresolved
+# origin must not be mistaken for one.
+PDG_FALLBACK = ("other", (1.00, 1.00, 1.00))
 
 
 def pdg_label_rgb(pdg, overrides=None):

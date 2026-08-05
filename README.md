@@ -41,10 +41,22 @@ source 2_mu_pipeline.sh
 # This bash script can do the whole pipeline by itself
 # Different cases to test in /gaudi_jobs/ 
 
-# For using the event display.
-# In folder /eventdisplay/ do
-python event_display_eve.py --hits ../gaudi_jobs/2_mu_pipeline/ShipHits.root --window 0 
-# where window is the "event"
+# 6. Event display. In folder /event_display/ do
+./launch.sh ../gaudi_jobs/2_mu_pipeline/ShipHits.root \
+            ../simulation/geometry/SND_compact.xml 0
+# Both paths are required: the compact MUST be the one the hits were simulated
+# with, or the hits get snapped to the wrong planes with no error.
+# The third argument is the event index, called "window" in the data model
+# (window_id, *Windowed collections). "window" and "event" are used
+# interchangeably in the framework because the chain supports two modes that
+# feed job3/job4/job5 the same collections:
+#   - job1_overlay.py (EventOverlay): event-by-event, window i == event i.
+#     This is what every committed pipeline runs.
+#   - job1_shuffler.py + job2_splitter.py (EventShuffler + EventWindowSplitter):
+#     merges several MC sources into one time stream with per-source delays and
+#     cuts it into fixed time windows, so a window then holds several events.
+# See event_display/README.md for the details, geometry variants and
+# --color-by mc.
 
 ```
 

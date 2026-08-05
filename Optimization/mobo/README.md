@@ -155,6 +155,42 @@ and a random sample of the interior. `config.write_variant(dry_run=True)` is
 still run as a final gate before anything is queued; a geometry that fails it is
 recorded `INFEASIBLE` without costing a core-hour.
 
+*Worked example — `sipad_fill`.* The mapping is
+
+```
+SiPad_NLayers = floor(sipad_fill x SiPad_NLayers_max(the other parameters))
+```
+
+clamped to `[1, max]` (`_fill_to_count` in `ship/geometry.py`). The point is
+that `SiPad_NLayers_max` is not a constant: it is
+`floor(SiPad_dim_z / layer_thickness)`, and both `SiPad_dim_z` and the layer
+thickness (through `SiPad_WThickness`) are themselves being optimized. A box
+like `NLayers in [8, 35]` x `dim_z in [250, 500]` x `WThickness in [5, 15]` is
+mostly geometries that do not exist — 35 layers of 15 mm of tungsten do not fit
+in 250 mm — whereas `sipad_fill in [0.3, 1.0]` builds for *any* combination of
+the rest.
+
+For the baseline, `Geometry.limits()` gives `SiPad_NLayers_max = 23`:
+
+| `sipad_fill` | layers | |
+|---|---|---|
+| 0.3 (bottom of the range) | 6 | |
+| **0.978** | **22** | the baseline |
+| 1.0 (top of the range) | 23 | |
+
+The baseline is 0.978 and not 1.0 because it uses 22 of the 23 layers that fit.
+The exact value is `(22 + 0.5) / 23`: `_count_to_fill` lands in the *middle* of
+the interval that maps to 22, not on its edge, so that re-deriving the baseline
+point cannot round down to 21.
+
+That maximum of 23 is what the material budget allows (15.55 mm per layer
+excluding the closing gap). Since `SiPad_layer_gap` is `auto`, the gap is then
+stretched so that whatever number of layers you asked for comes out equidistant
+and spans `SiPad_dim_z` exactly. Asking for fewer layers than fit does not
+shorten the detector, it dilutes it: trial `t00005` of `runs/smoke_local` has
+`sipad_fill = 0.401` -> 11 layers, and the air gap grows to 22.1 mm to fill the
+same 398.6 mm envelope.
+
 **Where the baseline already sits at the maximum, the scan runs downward from
 it.** `xy_gap_frac` and `sitarget_fill` are both 1.0 at the baseline — the gap
 uses its whole budget (4.9 mm of 4.9 mm) and the layers fill the whole envelope
@@ -209,6 +245,93 @@ written to `ShipHits.root` by `job5_rntuple.py` — are the intended next ones.
 When they arrive with a per-trial standard error, set `optimizer.fixed_noise:
 true` and have the payload also write `<metric>_stderr`; the GPs will use
 per-observation noise instead of an inferred homoscedastic term.
+
+---
+
+## How qLogNEHVI picks the next geometry
+
+Two objectives in conflict have no single optimum, only a Pareto front, and an
+optimizer needs a scalar. That scalar is the **dominated hypervolume**: given a
+reference point (here anchored to the baseline at half its hits and twice its
+cost), the front dominates a region of the objective plane, and its area is the
+metric. Improving the front means enlarging that area.
+
+**1. The surrogate.** `build_model` (`core/models.py`) fits one independent
+`SingleTaskGP` per objective on the completed trials. Each GP predicts, at any
+untried geometry, not a number but a posterior: a mean and an uncertainty.
+Independent on purpose — a simulated hit count and an analytic cost share no
+latent structure worth the extra hyperparameters.
+
+**2. The acquisition.** For a candidate *x*, ask: how much would the
+hypervolume grow if we simulated it? The answer is a distribution, so take its
+expectation over the GP posteriors, estimated by quasi-MC with `mc_samples`
+(128) draws. Reading the name backwards:
+
+| piece | meaning |
+|---|---|
+| **HVI** | hypervolume improvement — the area this point would add |
+| **E** | expected, integrated over the GP posterior. This is where exploration comes from: a point with a mediocre mean but a large variance can still have a high *expected* improvement, so uncertainty attracts on its own |
+| **N** | *noisy* — the current front is itself uncertain (a hit count from 100 events is an estimate), so observed values are not taken as truth; the posterior at the measured points is integrated over too. That is what `X_baseline` is for |
+| **q** | proposes *q* points at once; `batch_size: 1` here |
+| **Log** | evaluated in log space. Once a decent front exists, plain EHVI underflows to zero across most of the cube and its gradient flattens to exactly zero in floating point, so the optimizer cannot climb. The log formulation keeps the gradient informative |
+
+**3. Maximizing it.** `optimize_acqf` runs multi-start gradient ascent over the
+unit cube: `raw_samples` (512) draws to find promising starts, `num_restarts`
+(10) of them refined for up to 200 iterations. This is cheap — it only queries
+the GPs, never the simulator. Its maximizer is the next trial.
+
+**4. The asynchronous part.** When the loop asks for a trial there are up to
+`max_in_flight - 1` others still running. Their locations are known even though
+their outcomes are not, so they are passed as **`X_pending`** and the
+acquisition integrates over what they might return, discounting improvement
+they may already be delivering. Without it every slot of the batch would get a
+near-duplicate of the same point, and `max_in_flight` cores would do one core's
+work.
+
+Two lesser knobs: `prune_baseline` drops dominated points from `X_baseline`,
+which cannot change the front and only cost time; `sequential` picks a q-batch
+greedily rather than jointly, and is irrelevant at q=1.
+
+Everything above is in the maximization convention — the sign of a `min`
+objective is flipped in exactly one place (`ObjectiveSpec.signed`), and the
+plots put it back.
+
+### Knowing when the front has been found
+
+Strictly, you never do. `pareto_mask` (`core/pareto.py`) is BoTorch's
+`is_non_dominated` over the trials that were actually run: it reports which of
+*your observations* nothing else dominates. It says nothing about the true
+front, which for a black-box simulator over a 7D continuum is not computable —
+there is no analytic solution to compare against and no way to evaluate the
+whole space.
+
+What is measured instead is **convergence of the dominated hypervolume**.
+`hypervolume_trace` recomputes the hypervolume over the first *i* trials in
+trial order, giving a curve that is monotone non-decreasing by construction —
+`viz/progress.py` calls it "the one plot that says whether the optimization is
+working", and notes that a *drop* is impossible unless the reference point
+moved, i.e. unless something rewrote history. A plateau means the optimizer has
+stopped finding improvements; that is the practical stopping signal, and it is
+evidence of diminishing returns, not proof of optimality.
+
+Three caveats worth keeping in mind when reading that curve:
+
+* **A plateau can be local.** In 7D, a few dozen trials is a thin sample. The
+  curve flattening says the acquisition found nothing better nearby, not that
+  nothing better exists.
+* **Compare against the Sobol phase.** The honest test of whether the model
+  earns its keep is whether the hypervolume grows faster once qLogNEHVI takes
+  over than it did under the quasi-random design. If the two slopes match, the
+  GP is not adding anything.
+* **The front is as noisy as the metrics.** `pareto_mask` runs on observed
+  values, so a point can look non-dominated through Monte-Carlo luck. The
+  acquisition accounts for that internally (the *N* in the name); the reported
+  front does not.
+
+There is deliberately **no convergence-based stopping rule** in the loop: it
+ends on `max_trials` or `time_budget_hours` and nothing else. Stopping early on
+a plateau would need a noise model for the plateau itself, which is not worth
+it while the objectives are proxies.
 
 ---
 
