@@ -10,26 +10,46 @@ name: snd_proxy
 # the final optimization. The baseline must fall inside the box (asserted in
 # tests/ship/test_geometry.py), since trial 0 reproduces it exactly.
 parameters:
-  SiPad_WThickness:    { low: 5.0,  high: 15.0 }   # mm, baseline 10
-  SiPad_dim_z:         { low: 250,  high: 500 }    # mm, baseline 370
-  #  SiTarget_dim_z = 1700 mm - SiPad_dim_z, so this one moves both detectors
-  sipad_fill:          { low: 0.3,  high: 1.0 }    # -> SiPad_NLayers
-  SiTarget_WThickness: { low: 2.0,  high: 5.0 }    # mm, baseline 3.5
-  SiTarget_spacing:    { low: 8.0,  high: 15.0 }   # mm, baseline 11
-  sitarget_fill:       { low: 0.5,  high: 1.0 }    # -> SiTarget_NLayers
-  xy_gap_frac:         { low: 0.1,  high: 1.0 }    # -> SiTarget_XY_plane_gap
-# The baseline is at 1.0 for the last two (its XY gap already uses the whole
-# budget, and its layers already fill the envelope), so those two are scanned
-# downward from it: the range ends at the baseline rather than stopping short
-# of it. Being exactly at a limit has to work, and does — see
-# Geometry._length_within for the rendering detail that makes it so.
+  SiPad_WThickness:    { low: 10.0, high: 30.0 }             # mm, baseline 10
+  SiPad_dim_z:         { low: 220,  high: 1000 }             # mm, baseline 220
+  #  SiTarget_dim_z = SiDetector_total_dim_z - SiPad_dim_z (2200 mm), so this one
+  #  moves both detectors: at the top of the range the SiTarget is left 1200 mm,
+  #  still ample for 120 layers of its thickest absorber (912 mm).
+  SiPad_NLayers:       { low: 10,   high: 20,  kind: int }   # baseline 10
+  SiTarget_WThickness: { low: 2.0,  high: 5.0 }              # mm, baseline 3.5
+  SiTarget_NLayers:    { low: 80,   high: 120, kind: int }   # baseline 120
+  SiTarget_XY_plane_gap_frac: { low: 0.0, high: 1.0 }        # baseline 1
+# Layer counts are searched directly, as integers. They used to be fill
+# fractions because their upper bound moved with the other parameters; now both
+# layer gaps are `auto`, the pitch is dim_z/NLayers, and a count is bounded only
+# by the rigid content of a layer — a bound the box stays inside except in the
+# far corner (many thick SiPad layers in a short envelope), which the dry-run
+# gate rejects before anything is queued.
+#
+# SiTarget_spacing is gone. It was never independent: a SiTarget layer *is* the
+# W-to-W pitch, so the spacing only ever decided how much dead air each layer
+# carried, and it cost nothing in the objectives — a nuisance dimension. It is
+# now an output, SiTarget_dim_z / SiTarget_NLayers.
+#
+# SiTarget_XY_plane_gap_frac is a fraction because its budget is genuinely
+# derived: the air a layer has left once the pitch is fixed. 0 puts the Y plane
+# against the X plane, 1 against the W of the next layer; the baseline is 1, so
+# it sits on the upper edge of its range. It is a *template* constant now, not
+# something this layer maps onto a length — the interpolation happens where the
+# budget is defined (SND_compact_template.xml), which is also what makes the
+# whole [0, 1] interval feasible by construction rather than by arithmetic done
+# twice in two places.
 
 # Held at the baseline to keep the space at 7D. Purely mechanical quantities;
 # freeing one is a two-line change here, no code.
 fixed:
   SiPad_frame_gap: 0.1
   SiTarget_module_offset: 1
-  SiPad_layer_gap: auto    # config.py sizes it so the layers come out equidistant
+  # config.py sizes both so the layers of each detector come out equidistant and
+  # span their envelope exactly. This is what makes NLayers the sampling-pitch
+  # knob, and what removed SiTarget_spacing from the search space.
+  SiPad_layer_gap: auto
+  SiTarget_layer_gap: auto
 
 # The optimized subset of metrics.json. Everything else is still recorded.
 # ref_from_baseline: the worst value still worth having, as a multiple of what

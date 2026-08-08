@@ -131,85 +131,94 @@ python3 ../../../../src/mobo/ship/payload.py --workdir $PWD
 
 | parameter | range | baseline | note |
 |---|---|---|---|
-| `SiPad_WThickness` | 5 – 15 mm | 10 | |
-| `SiPad_dim_z` | 250 – 500 mm | 370 | also sets `SiTarget_dim_z = 1700 − this` |
-| `sipad_fill` | 0.3 – 1.0 | 0.978 | → `SiPad_NLayers` |
+| `SiPad_WThickness` | 10 – 30 mm | 10 | |
+| `SiPad_dim_z` | 220 – 1000 mm | 220 | also sets `SiTarget_dim_z = SiDetector_total_dim_z − this` (2200 mm) |
+| `SiPad_NLayers` | 10 – 20 (int) | 10 | |
 | `SiTarget_WThickness` | 2 – 5 mm | 3.5 | |
-| `SiTarget_spacing` | 8 – 15 mm | 11 | |
-| `sitarget_fill` | 0.5 – 1.0 | 1.0 | → `SiTarget_NLayers` |
-| `xy_gap_frac` | 0.1 – 1.0 | 1.0 | → `SiTarget_XY_plane_gap` |
+| `SiTarget_NLayers` | 80 – 120 (int) | 120 | |
+| `SiTarget_XY_plane_gap_frac` | 0.0 – 1.0 | 1 | 0 = Y plane against the X plane, 1 = against the next W |
 
-`SiPad_frame_gap` (0.1 mm), `SiTarget_module_offset` (1 mm) and
-`SiPad_layer_gap` (`auto`) are held at the baseline under `fixed:`; freeing one
-is a two-line config change, not a code change.
+`SiPad_frame_gap` (0.1 mm), `SiTarget_module_offset` (1 mm) and both layer gaps
+(`auto`) are held at the baseline under `fixed:`; freeing one is a two-line
+config change, not a code change.
 
-**Fill fractions instead of layer counts.** `SiPad_NLayers` is bounded by
-`floor(SiPad_dim_z / layer_thickness)`, which itself depends on
-`SiPad_WThickness` and `SiPad_dim_z`; `SiTarget_XY_plane_gap` is bounded by a
-budget built from the spacing, the absorber and the module offset. A box in
-those coordinates is mostly infeasible, and an optimizer that spends its budget
-discovering that learns nothing about physics. So the search space asks "what
-fraction of the space that is available do we use", and the unit cube becomes
-feasible by construction — `tests/ship/test_geometry.py` checks all 128 corners
-and a random sample of the interior. `config.write_variant(dry_run=True)` is
-still run as a final gate before anything is queued; a geometry that fails it is
-recorded `INFEASIBLE` without costing a core-hour.
+**Equidistant layers, so the counts can be searched directly.** Both detectors
+carry their closing gap on `auto`, which sizes it so that `NLayers` layers span
+`dim_z` exactly. The pitch is therefore `dim_z / NLayers` and the sensitive
+planes come out evenly spread over the whole envelope. Two consequences:
 
-*Worked example — `sipad_fill`.* The mapping is
+* **`NLayers` is the sampling-pitch knob**, and it can be an ordinary integer
+  parameter. Its only bound is the rigid content of a layer — the absorber plus
+  the sensors and the services — which no longer moves with a second quantity
+  being optimized at the same time.
+* **There is no `SiTarget_spacing` parameter.** A SiTarget layer *is* the W-to-W
+  pitch, so a free spacing was never independent of the count: all it decided on
+  its own was how much dead air each layer carried, and since the objectives
+  count silicon area and tungsten mass — both proportional to `NLayers`, neither
+  to the pitch — it was free in the cost function. A nuisance dimension. It is
+  now an output, `SiTarget_dim_z / SiTarget_NLayers`.
 
-```
-SiPad_NLayers = floor(sipad_fill x SiPad_NLayers_max(the other parameters))
-```
+Asking for fewer layers than fit does not shorten a detector, it dilutes it: the
+gap grows until the layers again span the envelope.
 
-clamped to `[1, max]` (`_fill_to_count` in `ship/geometry.py`). The point is
-that `SiPad_NLayers_max` is not a constant: it is
-`floor(SiPad_dim_z / layer_thickness)`, and both `SiPad_dim_z` and the layer
-thickness (through `SiPad_WThickness`) are themselves being optimized. A box
-like `NLayers in [8, 35]` x `dim_z in [250, 500]` x `WThickness in [5, 15]` is
-mostly geometries that do not exist — 35 layers of 15 mm of tungsten do not fit
-in 250 mm — whereas `sipad_fill in [0.3, 1.0]` builds for *any* combination of
-the rest.
+*What still needs a fraction.* The distance between the two Si planes is bounded
+by what the pitch leaves over once the rigid content is placed — a budget that
+genuinely is derived, and that moves with every other parameter. So it is not
+searched as a length at all: `SiTarget_XY_plane_gap_frac` says *where the Y
+plane sits* in that air, 0 flush against the X plane and 1 flush against the
+tungsten of the next layer. It decides how a layer's air is split between
+"between the two Si planes" and "after them"; it never changes the pitch.
 
-For the baseline, `Geometry.limits()` gives `SiPad_NLayers_max = 23`:
+The interpolation lives in `SND_compact_template.xml`, next to the budget it is
+a fraction of, not in the python. That is why `Geometry.constants_for` is a
+pass-through and `baseline_params` is the identity: every search parameter is a
+template constant, so nothing outside the template can disagree with it about
+what a parameter means. `simulation/geometry/SND_compact.xml` carries the same
+parametrization — same constant name, same 0/1 endpoints — over its own pitch,
+which there is the `SiTarget_spacing` input rather than `dim_z / NLayers`.
 
-| `sipad_fill` | layers | |
-|---|---|---|
-| 0.3 (bottom of the range) | 6 | |
-| **0.978** | **22** | the baseline |
-| 1.0 (top of the range) | 23 | |
+*What this costs.* The box is no longer feasible by construction. Far corners
+like "20 SiPad layers of 30 mm of tungsten in a 250 mm envelope" ask for 711 mm
+of material in 250 mm and simply do not exist. At the ranges above roughly 80%
+of the cube builds; `tests/ship/test_geometry.py` asserts that a majority does,
+and — more usefully — that every rejection is a *fitting* rejection, so the
+parametrization can never be what mangled a feasible point.
+`config.write_variant(dry_run=True)` is the final gate before anything is
+queued, and a geometry that fails it is recorded `INFEASIBLE` without costing a
+core-hour.
 
-The baseline is 0.978 and not 1.0 because it uses 22 of the 23 layers that fit.
-The exact value is `(22 + 0.5) / 23`: `_count_to_fill` lands in the *middle* of
-the interval that maps to 22, not on its edge, so that re-deriving the baseline
-point cannot round down to 21.
+*The two SiTarget bounds trade against each other.* `SiTarget_NLayers_max` is
+the count that fits with **no** XY gap, and `SiTarget_XY_plane_gap_max` is the
+gap that fits at the count actually asked for. Pinning both at once asks for a
+layer thinner than its own contents — which is why the feasibility test probes
+them at separate points rather than together.
 
-That maximum of 23 is what the material budget allows (15.55 mm per layer
-excluding the closing gap). Since `SiPad_layer_gap` is `auto`, the gap is then
-stretched so that whatever number of layers you asked for comes out equidistant
-and spans `SiPad_dim_z` exactly. Asking for fewer layers than fit does not
-shorten the detector, it dilutes it: trial `t00005` of `runs/smoke_local` has
-`sipad_fill = 0.401` -> 11 layers, and the air gap grows to 22.1 mm to fill the
-same 398.6 mm envelope.
+**The top of the range has to be exactly reachable.** The baseline sits at
+`SiTarget_XY_plane_gap_frac = 1` — the Y plane against the next absorber — so
+trial 0 is itself on the boundary of the box, and boundaries are where the
+optimizer keeps going back, since acquisition maxima like them. Reachable *in
+principle* is not enough.
 
-**Where the baseline already sits at the maximum, the scan runs downward from
-it.** `xy_gap_frac` and `sitarget_fill` are both 1.0 at the baseline — the gap
-uses its whole budget (4.9 mm of 4.9 mm) and the layers fill the whole envelope
-— so their ranges end at 1.0 and explore below, rather than stopping short of
-the design they are anchored to. (This is why `xy_gap_frac` goes to 1.0 and not
-to the 0.9 first sketched: with 0.9 the baseline would fall outside the cube,
-and trial 0 could not reproduce it.)
+It was not reachable, at first, back when this layer turned the fraction into a
+length itself. `config.format_value` renders a float as `"%g*mm"`, six
+significant digits, and the template then compares `SiTarget_XY_plane_gap`
+against its own derived maximum. Six digits round *up* about half the time,
+turning `gap == gap_max` into `gap > gap_max`, and roughly a third of the
+proposals on that boundary were rejected.
 
-That makes the top of the box a place the optimizer visits often — acquisition
-maxima like boundaries — so it has to be exactly reachable, not merely
-reachable in principle. It was not, at first: `config.format_value` renders a
-float as `"%g*mm"`, six significant digits, and the template compares
-`SiTarget_XY_plane_gap` against its own derived maximum. Six digits round *up*
-about half the time, turning `gap == gap_max` into `gap > gap_max`, and roughly
-a third of the proposals sitting on that boundary were rejected. The baseline
-never showed it, because 4.9 is exact in six digits. `Geometry._length_within`
-now asks the renderer what it would write and falls back to a full-precision
-verbatim string only when the plain float would overshoot — so the boundary is
-reachable and the baseline's XML is unchanged.
+Two things fix it for good, and both are in the template now. The fraction is
+written at full precision (17 significant digits round-trip a float exactly),
+and the gap is interpolated as `max − (1 − frac)·(max − min)` rather than the
+algebraically identical `min + frac·(max − min)`: only the first form yields
+*exactly* `max` at `frac = 1`. There is no longer a length rendered at six
+digits anywhere on the path, so the failure mode cannot come back;
+`tests/ship/test_geometry.py` asserts the equality holds for every variant.
+
+The other endpoint is not 0 either, for a reason worth knowing: the XY gap is a
+`<slice>` of `SiTarget.xml` like any other, and Geant4 aborts on a box of null
+extent (`G4Box::G4Box, "Dimensions too small for Solid"`). "The two planes are
+touching" is rendered as the same nanometre of air (`AUTO_MIN`) that every other
+gap with nothing left to give collapses to.
 
 ### Objectives
 

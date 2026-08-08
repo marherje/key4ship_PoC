@@ -1,21 +1,28 @@
-"""Bridge to the existing DD4hep variant machinery, and the reparametrization.
+"""Bridge to the existing DD4hep variant machinery, and the derived limits.
 
 Two jobs.
 
-**1. Reparametrization.** The natural design parameters are not a good search
-space. `SiPad_NLayers` is bounded by `floor(SiPad_dim_z / layer_thickness)`,
-which depends on `SiPad_WThickness` and `SiPad_dim_z`; `SiTarget_XY_plane_gap`
-is bounded by a budget built from `SiTarget_spacing`, `SiTarget_WThickness` and
-the module offset. A box in those coordinates is mostly infeasible, and an
-optimizer that spends its budget discovering that learns nothing about physics.
-So the search space uses *fill fractions* instead — "how much of the space that
-is available do we use" — which makes the unit cube feasible by construction:
+**1. Knowing what fits.** Both detectors carry their layer gap on `auto`, so
+each one's pitch is `dim_z / NLayers` and the layers come out equidistant across
+the whole envelope. That is what lets the layer counts be searched *directly*,
+as integers: a count is then bounded only by the rigid content of a layer, not
+by another quantity being optimized at the same time. It is also why there is no
+`SiTarget_spacing` parameter — a SiTarget layer *is* the W-to-W pitch, so the
+spacing was never independent of the count, and all it did on its own was decide
+how much dead air each layer carried.
 
-    SiPad_NLayers          = floor(sipad_fill    x SiPad_NLayers_max(params))
-    SiTarget_NLayers       = floor(sitarget_fill x SiTarget_NLayers_max(params))
-    SiTarget_XY_plane_gap  =       xy_gap_frac   x SiTarget_XY_plane_gap_max(params)
+There is no reparametrization left to do here. Every search parameter is a
+template constant, passed straight through. The one quantity whose budget really
+is derived — where the Y plane sits in the air a layer has left once the pitch is
+fixed — is a fraction *in the template itself*
+(`SiTarget_XY_plane_gap_frac`, 0 against the X plane, 1 against the next
+absorber), so the interpolation happens where the budget is defined and this
+module never has to know the formula. That also retired `_length_within`: a
+fraction is written to the XML at full precision and turned into a length by the
+template, so there is no longer a length rendered at six significant digits that
+can round *up* past the maximum it is about to be checked against.
 
-**2. Not duplicating the template.** Those `*_max` are computed by rendering the
+**2. Not duplicating the template.** The `*_max` are computed by rendering the
 template with a probe value and resolving its `<define>` block with the very
 parser the rest of the project uses — not by copying the formulas here. A change
 to `SND_compact_template.xml` propagates on its own; only the `auto` slack rule
@@ -58,17 +65,19 @@ def load_module(name: str, path: Path) -> Any:
     return module
 
 
-# Free parameters this module derives rather than passes straight through.
-FILL_PARAMS = {
-    "sipad_fill": "SiPad_NLayers",
-    "sitarget_fill": "SiTarget_NLayers",
-    "xy_gap_frac": "SiTarget_XY_plane_gap",
-}
+# NOTE: there is deliberately no table of derived parameters here any more.
+# `sipad_fill`, `sitarget_fill` and `xy_gap_frac` all used to live in one, each
+# mapping a unit-interval search coordinate onto a length. The first two went
+# when both layer gaps moved to `auto` (the pitch became dim_z/NLayers, so the
+# counts stopped being bounded by a quantity under optimization and could be
+# searched directly as integers); the last one went into the template, as
+# `SiTarget_XY_plane_gap_frac`. Every search parameter is now a template
+# constant and `constants_for` is a pass-through.
 
 
 @dataclass(frozen=True)
 class Limits:
-    """The derived upper bounds the fill fractions are fractions *of*."""
+    """The derived upper bounds: what fits, and what the XY fraction is *of*."""
 
     sipad_nlayers_max: int
     sitarget_nlayers_max: int
@@ -115,39 +124,61 @@ class Geometry:
     def limits(self, params: dict[str, Any]) -> Limits:
         """Derived bounds for a set of *direct* parameters.
 
-        Computed on a probe geometry — one layer everywhere, no XY gap — because
-        the bounds must not depend on the very quantities they bound.
+        The probe zeroes `SiTarget_XY_plane_gap_frac` and puts both `auto` gaps
+        on their floor, so what comes back is the layer stripped down to its
+        rigid content — the bound must not depend on the very quantities it
+        bounds.
+
+        `SiPad_NLayers` and `SiTarget_NLayers` are *not* probed away, unlike in
+        the fill-fraction days when they were derived: they are direct search
+        parameters now, and `SiTarget_XY_plane_gap_max` legitimately depends on
+        the layer count (the pitch is `dim_z / NLayers`), so it has to be
+        resolved at the counts actually asked for.
         """
         constants = self.direct_constants(params)
-        auto = (
-            str(constants.get("SiPad_layer_gap", "")).strip().lower() == self.config.AUTO
-        )
-        probe = dict(
-            constants,
-            SiPad_NLayers=1,
-            SiTarget_NLayers=1,
-            SiTarget_XY_plane_gap=0,
-        )
-        if auto:
-            probe["SiPad_layer_gap"] = self.config.AUTO_MIN
+        probe = dict(constants, SiTarget_XY_plane_gap_frac=0)
+        auto_keys = [
+            k
+            for k in ("SiPad_layer_gap", "SiTarget_layer_gap")
+            if str(constants.get(k, "")).strip().lower() == self.config.AUTO
+        ]
+        for key in auto_keys:
+            probe[key] = self.config.AUTO_MIN
         c = self.resolve(probe)
 
-        if auto:
+        def nlayers_max(gap_key: str, thick_key: str, env_key: str, max_key: str) -> int:
+            """How many layers fit, honouring `auto` when it is in play."""
+            if gap_key not in auto_keys:
+                return int(c[max_key])
             # `auto` sizes the air slice so that N layers span dim_z exactly, so
             # the binding constraint is not floor(dim_z/thickness) but the point
             # where the slack itself would have to go negative:
             #     slack = dim_z/N - rigid - AUTO_EPS >= AUTO_MIN
             # (`rigid` is the layer without its slack; the probe injected
             # AUTO_MIN as the gap, so take it back out.)
-            rigid = c["SiPad_LayerThickness"] - self.config.AUTO_MIN
+            rigid = c[thick_key] - self.config.AUTO_MIN
             budget = rigid + self.config.AUTO_EPS + self.config.AUTO_MIN
-            sipad_max = int(math.floor(c["SiPad_dim_z"] / budget)) if budget > 0 else 0
-        else:
-            sipad_max = int(c["SiPad_NLayers_max"])
+            return int(math.floor(c[env_key] / budget)) if budget > 0 else 0
 
         return Limits(
-            sipad_nlayers_max=max(0, sipad_max),
-            sitarget_nlayers_max=max(0, int(c["SiTarget_NLayers_max"])),
+            sipad_nlayers_max=max(
+                0,
+                nlayers_max(
+                    "SiPad_layer_gap",
+                    "SiPad_LayerThickness",
+                    "SiPad_dim_z",
+                    "SiPad_NLayers_max",
+                ),
+            ),
+            sitarget_nlayers_max=max(
+                0,
+                nlayers_max(
+                    "SiTarget_layer_gap",
+                    "SiTarget_LayerThickness",
+                    "SiTarget_dim_z",
+                    "SiTarget_NLayers_max",
+                ),
+            ),
             sitarget_xy_gap_max=float(c["SiTarget_XY_plane_gap_max"]),
         )
 
@@ -156,13 +187,13 @@ class Geometry:
     def direct_constants(self, params: dict[str, Any]) -> dict[str, Any]:
         """Base constants overridden by the parameters that *are* constants."""
         constants = dict(self.base_constants)
-        unknown = [k for k in params if k not in constants and k not in FILL_PARAMS]
+        unknown = [k for k in params if k not in constants]
         if unknown:
             # Same typo guard as make_variants.py: a parameter that matches
             # nothing is a bug in the config, not something to ignore.
             raise RuntimeError(
-                "parameter(s) that are neither a template constant nor a known "
-                "derived parameter: " + ", ".join(sorted(unknown))
+                "parameter(s) that are not a template constant: "
+                + ", ".join(sorted(unknown))
             )
         for key, value in params.items():
             if key in constants:
@@ -170,81 +201,23 @@ class Geometry:
         return constants
 
     def constants_for(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Search-space parameters -> the full constants dict `config.py` wants."""
-        constants = self.direct_constants(params)
-        if not any(k in params for k in FILL_PARAMS):
-            return constants
+        """Search-space parameters -> the full constants dict `config.py` wants.
 
-        limits = self.limits(params)
-        if "sipad_fill" in params:
-            constants["SiPad_NLayers"] = _fill_to_count(
-                params["sipad_fill"], limits.sipad_nlayers_max
-            )
-        if "sitarget_fill" in params:
-            constants["SiTarget_NLayers"] = _fill_to_count(
-                params["sitarget_fill"], limits.sitarget_nlayers_max
-            )
-        if "xy_gap_frac" in params:
-            constants["SiTarget_XY_plane_gap"] = self._length_within(
-                "SiTarget_XY_plane_gap",
-                float(params["xy_gap_frac"]) * limits.sitarget_xy_gap_max,
-                limits.sitarget_xy_gap_max,
-            )
-        return constants
-
-    def _length_within(self, name: str, value: float, limit: float) -> Any:
-        """A length that still renders to at most `limit`.
-
-        `config.format_value` writes a float as `"%g*mm"` — six significant
-        digits — and the template then compares this constant against its own
-        derived maximum. Six digits round *up* about half the time, which turns
-        `gap == gap_max` into `gap > gap_max` and gets the geometry rejected.
-        The baseline never showed it (4.9 mm is exact in six digits); an
-        optimizer proposing arbitrary floats, whose acquisition maxima like to
-        sit on boundaries, lost about a third of the trials it put there.
-
-        So: ask the renderer what it would actually write. If that lands at or
-        below the limit, keep the plain float and the XML is unchanged — which
-        is what keeps trial 0 byte-identical to the committed baseline. Only
-        when it would overshoot is the value written as a full-precision
-        verbatim string instead, which `format_value` passes through untouched
-        (`config.resolve_auto` writes `SiPad_layer_gap` the same way).
+        A pass-through, and that is the point: every search parameter is a
+        template constant, including `SiTarget_XY_plane_gap_frac`, so nothing
+        here can disagree with the template about what a parameter means.
         """
-        value = min(float(value), float(limit))
-        rendered = str(self.config.format_value(name, value)).replace("*mm", "")
-        try:
-            if float(rendered) <= limit:
-                return value
-        except ValueError:  # not a plain number: leave it to the caller
-            return value
-        # 17 significant digits round-trip a float exactly, so what the parser
-        # reads back is bit-for-bit the value checked here.
-        return f"{value:.17g}*mm"
+        return self.direct_constants(params)
 
     def baseline_params(self) -> dict[str, Any]:
         """The template's own design, expressed in search-space coordinates.
 
-        Integer fills are inverted to the *midpoint* of the interval that maps
-        back to the baseline count: the edge value is exact in real arithmetic
-        but one ulp of floating point either way changes the floor, and trial 0
-        has to reproduce the baseline geometry byte for byte.
+        Now the identity. The layer counts are search parameters themselves
+        (`SearchSpace` rounds them back to the same integers) and the XY gap
+        fraction is one too, so there is nothing left to invert — which is the
+        strongest form the "trial 0 reproduces the baseline" claim can take.
         """
-        params: dict[str, Any] = dict(self.base_constants)
-        limits = self.limits(self.base_constants)
-
-        params["sipad_fill"] = _count_to_fill(
-            int(self.base_constants["SiPad_NLayers"]), limits.sipad_nlayers_max
-        )
-        params["sitarget_fill"] = _count_to_fill(
-            int(self.base_constants["SiTarget_NLayers"]), limits.sitarget_nlayers_max
-        )
-        params["xy_gap_frac"] = (
-            float(self.base_constants["SiTarget_XY_plane_gap"])
-            / limits.sitarget_xy_gap_max
-            if limits.sitarget_xy_gap_max > 0
-            else 0.0
-        )
-        return params
+        return dict(self.base_constants)
 
     # ── the gate ─────────────────────────────────────────────────────────────
 
@@ -275,20 +248,3 @@ class Geometry:
     ) -> tuple[bool, list[str], list[str]]:
         """Render and write one compact file. Returns (ok, summary, errors)."""
         return self.config.write_variant(constants, Path(out_path), dry_run=False)
-
-
-# ── the fill <-> count map ───────────────────────────────────────────────────
-
-
-def _fill_to_count(fill: float, maximum: int) -> int:
-    """Fraction of the available layers -> a layer count in [1, maximum]."""
-    if maximum < 1:
-        return 0
-    return max(1, min(maximum, int(math.floor(float(fill) * maximum))))
-
-
-def _count_to_fill(count: int, maximum: int) -> float:
-    """Inverse of `_fill_to_count`, landing in the middle of the interval."""
-    if maximum < 1:
-        return 0.0
-    return min(1.0, (count + 0.5) / maximum)

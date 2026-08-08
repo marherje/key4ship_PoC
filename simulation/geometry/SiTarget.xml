@@ -35,6 +35,14 @@
         <!-- Air gap after second Si plane to next absorber -->
         <slice material="Air" thickness="SiTarget_module_offset"
                sensitive="false" vis="AirVis"/>
+        <!-- Slack that closes the layer, so that the W-to-W pitch stays
+             SiTarget_spacing whatever SiTarget_XY_plane_gap is. Without it the XY
+             gap sets the pitch (the plugin stacks slices contiguously; <layer> has
+             no spacing attribute), and shrinking the gap contracts every layer and
+             packs the whole stack at the centre of its envelope. Keep it LAST: the
+             sensitive slices are indexed from the top, X at 2 and Y at 4. -->
+        <slice material="Air" thickness="SiTarget_layer_gap"
+               sensitive="false" vis="AirVis"/>
   </layer>
 
 </detector>

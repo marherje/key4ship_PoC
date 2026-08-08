@@ -141,19 +141,27 @@ subdetector, are in that trial's `params.yaml`.
 `nhits_sipad`, minimize `cost_proxy`. Comparing an early random-phase trial with
 one that ended up on the Pareto front shows what the optimizer actually did to
 the detector, and both differences are visible in the display without measuring
-anything:
+anything.
+
+Each command is a single line, so it can be copied straight out. Run them from
+`event_display/`:
 
 ```bash
-cd event_display
-
 # t00001 -- Sobol, first point of the random phase
-T=../Optimization/mobo/runs/snd_proxy/trials/t00001
-./launch.sh $T/ShipHits.root $T/geometry.xml 0
+./launch.sh ../Optimization/mobo/runs/snd_proxy/trials/t00001/ShipHits.root ../Optimization/mobo/runs/snd_proxy/trials/t00001/geometry.xml 0
+
+# t00001, coloured by MC origin
+python event_display_eve.py --hits ../Optimization/mobo/runs/snd_proxy/trials/t00001/ShipHits.root --geometry ../Optimization/mobo/runs/snd_proxy/trials/t00001/geometry.xml --window 0 --color-by mc
 
 # t00038 -- qLogNEHVI, highest-nhits point of the Pareto front
-T=../Optimization/mobo/runs/snd_proxy/trials/t00038
-./launch.sh $T/ShipHits.root $T/geometry.xml 0
+./launch.sh ../Optimization/mobo/runs/snd_proxy/trials/t00038/ShipHits.root ../Optimization/mobo/runs/snd_proxy/trials/t00038/geometry.xml 0
+
+# t00038, coloured by MC origin
+python event_display_eve.py --hits ../Optimization/mobo/runs/snd_proxy/trials/t00038/ShipHits.root --geometry ../Optimization/mobo/runs/snd_proxy/trials/t00038/geometry.xml --window 0 --color-by mc
 ```
+
+`launch.sh` does not forward `--color-by`, which is why the MC-origin variants
+call `event_display_eve.py` directly with the same two paths.
 
 |  | `t00001` (Sobol) | `t00038` (Pareto front) |
 |---|---|---|
@@ -162,33 +170,49 @@ T=../Optimization/mobo/runs/snd_proxy/trials/t00038
 | SiPad z-extent | `[-398.1, 0.0]` mm | `[-500.0, 0.0]` mm |
 | SiPad layer pitch | 24.88 mm | **10.64 mm** |
 | SiTarget | 47 layers, W 2.94 mm | 40 layers, W 2.47 mm |
-| SiTarget z-extent | `[-1700.0, -398.1]` mm | `[-1700.0, -500.0]` mm |
-| SiTarget spacing | 14.69 mm | 15.00 mm |
+| SiTarget z-extent *(as built)* | `[-1219.9, -878.2]` mm | `[-1221.2, -978.8]` mm |
+| SiTarget envelope *(nominal)* | `[-1700.0, -398.1]` mm | `[-1700.0, -500.0]` mm |
+| SiTarget–SiPad air gap | **480.1 mm** | **478.8 mm** |
 | `nhits_sipad` | 5423 | 15132 |
 | `cost_proxy` | 716.2 | 951.3 |
 
-Two things to look for on screen:
+> The two SiTarget rows differ, and the display shows the first one. A trial's
+> `params.yaml` reports only the *nominal* envelope, so the void is invisible
+> there. `SiTarget.xml` declares `<layer>` with no `spacing` attribute, so
+> `SiTargetDetector.cpp` stacks layers contiguously at their real thickness
+> `W + 2·module_offset + 2·sensor_thickness + XY_plane_gap`, while the layer
+> budget used `SiTarget_LayerThickness = SiTarget_spacing`. Those two agreed
+> only when the XY gap took the whole leftover; below that the stack was shorter
+> than its envelope and sat centred in it, leaving equal voids upstream and
+> downstream. The baseline filled 99.2% of its envelope and had a 5 mm gap;
+> `t00001` filled 26.2% and `t00038` 20.2%.
+>
+> **This no longer happens**, and the trials above are from before the fix.
+> `SiTarget.xml` now ends its layer with a closing `SiTarget_layer_gap` slice,
+> so the layer sums to the pitch for *any* `SiTarget_XY_plane_gap_frac` and the
+> stack always spans its envelope. The fraction only decides where the Y plane
+> sits inside a layer (0 against the X plane, 1 against the next tungsten), not
+> how long the stack is.
 
-1. **The SiPad sampling gets almost three times finer** — 16 planes become 47,
+Three things to look for on screen:
+
+1. **A ~480 mm void between the SiTarget and the SiPad**, in both trials — see
+   the note above. It is the loudest difference from the baseline, which has
+   only 5 mm there, and it is a search-space artefact rather than a design the
+   optimizer argued for.
+2. **The SiPad sampling gets almost three times finer** — 16 planes become 47,
    and the pitch drops from 24.9 mm to 10.6 mm. This is the whole Pareto front:
    `sipad_fill` is the only parameter that varies along it.
-2. **The SiTarget/SiPad boundary moves upstream**, from −398 mm to −500 mm.
+3. **The SiPad envelope grows upstream**, from −398 mm to −500 mm.
    `SiTarget_dim_z = 1700 mm − SiPad_dim_z` in the compact, so the two
    subdetectors share a fixed 1700 mm budget: every millimetre the SiPad gains
    is one the SiTarget loses. That is why the optimizer pushed `SiPad_dim_z` to
    its upper bound — it buys SiPad planes *and* removes SiTarget layers, which
    is the dominant term in `cost_proxy`.
 
-`--color-by mc` works on both files, and is the clearer view for seeing how much
-more of the muon and pion tracks the finer SiPad samples:
-
-```bash
-python event_display_eve.py \
-    --hits     ../Optimization/mobo/runs/snd_proxy/trials/t00038/ShipHits.root \
-    --geometry ../Optimization/mobo/runs/snd_proxy/trials/t00038/geometry.xml \
-    --window   0 \
-    --color-by mc
-```
+The MC-origin colouring is the clearer view for the second point: it separates
+the muon from the pion, so how much more of each track the finer SiPad samples
+is read off directly instead of guessed from the hit density.
 
 Both trials ran the `mu_pi` pipeline over 100 events, so `--window` accepts
 0–99. Since each trial carries its own `geometry.xml`, never mix the two: a

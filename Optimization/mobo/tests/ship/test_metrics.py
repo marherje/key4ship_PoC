@@ -24,7 +24,7 @@ from mobo.ship.metrics import (
 BASELINE = {
     # SiPad: 3x3 ASUs of 2x2 wafers; a wafer is 16 pads of 5.53 mm plus a
     # 0.61 mm rim per side -> 88.48 + 1.22 = 89.70 mm.
-    "SiPad_NLayers": 22,
+    "SiPad_NLayers": 10,
     "SiPad_NASUsX": 3,
     "SiPad_NASUsY": 3,
     "SiPad_NWafersX": 2,
@@ -50,7 +50,7 @@ BASELINE = {
 
 
 def test_silicon_area_by_hand():
-    # SiPad: one plane is (3*2*89.70)^2 = 538.2^2 mm^2, 22 of them.
+    # SiPad: one plane is (3*2*89.70)^2 = 538.2^2 mm^2, 10 of them.
     plane = (3 * 2 * 89.70) ** 2 / 1e6
     assert plane == pytest.approx(0.28965924)
     # SiTarget: (4*99.25) x (2*199.5) = 397 x 399 mm^2, TWO planes per layer.
@@ -58,16 +58,16 @@ def test_silicon_area_by_hand():
     assert sitarget_plane == pytest.approx(0.158403)
 
     areas = silicon_areas_m2(BASELINE)
-    assert areas["sipad"] == pytest.approx(22 * plane)
+    assert areas["sipad"] == pytest.approx(10 * plane)
     assert areas["sitarget"] == pytest.approx(2 * 120 * sitarget_plane)
     assert areas["sitarget"] == pytest.approx(38.01672)
 
 
 def test_tungsten_mass_by_hand():
-    # SiPad: 22 plates of 10 mm over 540x540 mm -> 64152 cm^3 of tungsten.
+    # SiPad: 10 plates of 10 mm over 540x540 mm -> 29160 cm^3 of tungsten.
     masses = tungsten_masses_kg(BASELINE)
-    assert masses["sipad"] == pytest.approx(64152.0 * 19.3 / 1000.0)
-    assert masses["sipad"] == pytest.approx(1238.1336)
+    assert masses["sipad"] == pytest.approx(29160.0 * 19.3 / 1000.0)
+    assert masses["sipad"] == pytest.approx(562.788)
     # SiTarget: 120 plates of 3.5 mm over 400x400 mm.
     assert masses["sitarget"] == pytest.approx(67200.0 * 19.3 / 1000.0)
     assert masses["sitarget"] == pytest.approx(1296.96)
@@ -75,12 +75,12 @@ def test_tungsten_mass_by_hand():
 
 def test_cost_proxy_by_hand():
     metrics = analytic_metrics(BASELINE, CostModel(si_per_m2=30.0, w_per_kg=0.1))
-    si = 22 * (538.2**2) / 1e6 + 2 * 120 * (397 * 399) / 1e6
-    w = (22 * 10 * 540 * 540 + 120 * 3.5 * 400 * 400) / 1e3 * 19.3 / 1e3
+    si = 10 * (538.2**2) / 1e6 + 2 * 120 * (397 * 399) / 1e6
+    w = (10 * 10 * 540 * 540 + 120 * 3.5 * 400 * 400) / 1e3 * 19.3 / 1e3
     assert metrics["si_area_m2"] == pytest.approx(si)
     assert metrics["w_mass_kg"] == pytest.approx(w)
     assert metrics["cost_proxy"] == pytest.approx(30.0 * si + 0.1 * w)
-    assert metrics["cost_proxy"] == pytest.approx(1585.186, abs=1e-3)
+    assert metrics["cost_proxy"] == pytest.approx(1413.374, abs=1e-3)
 
 
 def test_the_two_silicon_planes_per_sitarget_layer_are_not_forgotten():
@@ -93,7 +93,7 @@ def test_the_two_silicon_planes_per_sitarget_layer_are_not_forgotten():
 
 def test_channel_counts_by_hand():
     counts = channel_counts(BASELINE)
-    assert counts["sipad"] == 22 * 96 * 96
+    assert counts["sipad"] == 10 * 96 * 96
     # Per sensor: 99.25/0.0755 = 1314 strips across, 199.5/0.0755 = 2642 down;
     # 8 sensors, both planes, 120 layers.
     assert counts["sitarget"] == 120 * 8 * (1314 + 2642)

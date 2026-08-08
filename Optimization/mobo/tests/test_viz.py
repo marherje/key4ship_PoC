@@ -39,9 +39,9 @@ def populated_store(tmp_path):
     for i in range(20):
         trial = store.create(
             params={
-                "SiPad_WThickness": rng.uniform(5, 15),
-                "SiPad_dim_z": rng.uniform(250, 500),
-                "sipad_fill": rng.uniform(0.3, 1.0),
+                "SiPad_WThickness": rng.uniform(10, 30),
+                "SiPad_dim_z": rng.uniform(220, 1000),
+                "SiPad_NLayers": rng.randint(10, 20),
             },
             unit_x=[rng.random() for _ in range(3)],
             seed=i,

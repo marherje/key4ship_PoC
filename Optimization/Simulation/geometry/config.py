@@ -53,6 +53,8 @@ REF_RE = re.compile(r'(ref=")([^"/][^"]*)(")')
 AUTO = "auto"
 AUTO_SLACK = {
     "SiPad_layer_gap": ("SiPad_LayerThickness", "SiPad_dim_z", "SiPad_NLayers"),
+    "SiTarget_layer_gap": (
+        "SiTarget_LayerThickness", "SiTarget_dim_z", "SiTarget_NLayers"),
 }
 # Floor an `auto` parameter never goes below: the slice has to stay in the
 # geometry (the index of the sensitive slice behind it depends on it) and Geant4
@@ -76,10 +78,21 @@ AUTO_EPS = 1e-4          # mm
 # used for the minimum slice thickness.
 OVERLAP_TOL = 1e-6       # mm
 
+# Parameters whose value is a dimensionless fraction of a budget the template
+# derives, rather than a length: rendered without a unit and required to lie in
+# [0, 1]. A fraction exists wherever the budget moves with the other parameters,
+# so that no value in the search box can ever be out of range — see
+# SiTarget_XY_plane_gap_frac in SND_compact_template.xml.
+FRACTION_SUFFIX = "_frac"
+
 # (value, derived upper limit) pairs checked on the resolved geometry.
 LIMIT_PAIRS = [
     ("SiPad_NLayers", "SiPad_NLayers_max"),
     ("SiTarget_NLayers", "SiTarget_NLayers_max"),
+    # The XY gap is derived from a fraction now, so this can only fire on a
+    # fraction outside [0, 1] — which `summarize` reports directly. Kept because
+    # it is the check on the *rendered* geometry, and because it puts the gap in
+    # the summary in mm, which is what you actually want to read.
     ("SiTarget_XY_plane_gap", "SiTarget_XY_plane_gap_max"),
 ]
 
@@ -97,6 +110,15 @@ def format_value(name, val):
         return val                      # verbatim: allows DD4hep expressions
     if name.endswith("NLayers"):
         return str(int(val))
+    if name.endswith(FRACTION_SUFFIX):
+        # Dimensionless, and written at full precision rather than %g's six
+        # significant digits: the template turns a fraction into a length by
+        # interpolating between two derived bounds, and it then checks that
+        # length against the upper one. Six digits round *up* about half the
+        # time, which turned `frac = 1` into a gap past its own maximum and got
+        # the geometry rejected. 17 digits round-trip a float exactly, so what
+        # the parser reads back is bit-for-bit what was asked for.
+        return "%.17g" % float(val)
     return "%g*mm" % float(val)
 
 
@@ -136,6 +158,17 @@ def render(template_text, constants, out_dir):
     if extra:
         problems.append("parameter(s) with no XnameX placeholder in %s: %s"
                         % (TEMPLATE.name, ", ".join(extra)))
+    # Fractions, checked on the way in. `summarize` checks them again on the
+    # resolved geometry (which is also what covers `--show` on an existing XML),
+    # but by then a fraction above 1 has already made the layer longer than its
+    # pitch, and `auto` reports that as "no caben" — true, and useless for
+    # finding the cause.
+    out_of_range = ["%s = %g" % (k, float(v))
+                    for k, v in sorted(constants.items())
+                    if k.endswith(FRACTION_SUFFIX) and not isinstance(v, str)
+                    and not 0.0 <= float(v) <= 1.0]
+    if out_of_range:
+        problems.append("fraccion(es) fuera de [0, 1]: " + ", ".join(out_of_range))
     if problems:
         raise RuntimeError("; ".join(problems))
 
@@ -228,6 +261,13 @@ def summarize(compact_path):
     c = _geometry(compact_path)._constants
 
     lines, errors = [], []
+
+    for name in sorted(k for k in c if k.endswith(FRACTION_SUFFIX)):
+        if not 0.0 <= c[name] <= 1.0:
+            errors.append("%s = %g fuera de [0, 1]" % (name, c[name]))
+        else:
+            lines.append("  %-24s %9.3f  (fraccion del presupuesto derivado)"
+                         % (name, c[name]))
 
     for value, limit in LIMIT_PAIRS:
         if value not in c or limit not in c:

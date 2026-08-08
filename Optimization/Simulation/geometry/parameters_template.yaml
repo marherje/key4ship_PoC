@@ -17,9 +17,10 @@
 # Lengths are in mm; layer counts are integers. A value given as a string is
 # passed to the XML verbatim, so DD4hep expressions ("3.5*mm+1*mm") also work.
 #
-# NLayers and XY_plane_gap are checked against the *_max constants derived in
-# the template (floor(dim_z/LayerThickness) and the W-to-W spacing budget);
-# exceeding one of them is a hard error and nothing is written.
+# NLayers is checked against the *_max constants derived in the template
+# (floor(dim_z/LayerThickness)); exceeding one of them is a hard error and
+# nothing is written. A key ending in `_frac` is a dimensionless fraction, is
+# rendered without a unit, and must lie in [0, 1].
 #
 # SiPad_layer_gap accepts the special value `auto`. The plugin packs the SiPad
 # layers contiguously and centres them in the envelope, so with a fixed gap the
@@ -39,11 +40,18 @@ constants:
   SiPad_layer_gap:       auto      # closes the layer: chip -> W of the next one;
                                    # `auto` -> equidistant layers
   SiPad_frame_gap:        0.1      # W -> carbon frame, essentially flush
-  SiPad_dim_z:            370      # total SiPad envelope along z
-  SiPad_NLayers:           22      # <= SiPad_NLayers_max
+  SiPad_dim_z:            220      # total SiPad envelope along z
+  SiPad_NLayers:           10      # <= SiPad_NLayers_max
 
   SiTarget_WThickness:      3.5
   SiTarget_module_offset:   1      # from W to the Si planes
-  SiTarget_spacing:        11      # between W planes
-  SiTarget_XY_plane_gap:    4.9    # X plane -> Y plane; <= SiTarget_XY_plane_gap_max
+  SiTarget_layer_gap:    auto      # closes the layer: Y plane -> W of the next one;
+                                   # `auto` -> equidistant layers. Replaces the old
+                                   # SiTarget_spacing input, which was the same
+                                   # quantity read the other way round.
+  SiTarget_XY_plane_gap_frac: 1    # where the Y plane sits in the air the pitch
+                                   # leaves over: 0 = against the X plane,
+                                   # 1 = against the W of the next layer.
+                                   # Dimensionless; the mm are derived and
+                                   # reported by config.py.
   SiTarget_NLayers:       120      # <= SiTarget_NLayers_max

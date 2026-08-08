@@ -1,10 +1,13 @@
-"""The geometry bridge: limits, reparametrization, and the feasibility gate.
+"""The geometry bridge: derived limits and the feasibility gate.
 
-The claim under test is that the unit cube is feasible *by construction* — that
-`derived limit x fill fraction` never produces a geometry the real renderer would
-refuse. Everything here is checked against `config.py` itself rather than against
-a copy of its formulas, so a change to `SND_compact_template.xml` shows up as a
-failure here instead of as a run full of INFEASIBLE trials.
+The claim under test is that the search box is feasible *by construction* —
+that no point of it produces a geometry the real renderer would refuse for any
+reason other than the layers genuinely not fitting. That is what
+`SiTarget_XY_plane_gap_frac` buys: a fraction of a budget the template derives,
+so the whole [0, 1] interval is legal whatever the pitch turns out to be.
+Everything here is checked against `config.py` itself rather than against a copy
+of its formulas, so a change to `SND_compact_template.xml` shows up as a failure
+here instead of as a run full of INFEASIBLE trials.
 
 No ROOT and no key4hep needed: `config.py` and `parse_geometry.py` are pure
 python, which is what makes this gate cheap enough to run per trial.
@@ -12,29 +15,28 @@ python, which is what makes this gate cheap enough to run per trial.
 
 from __future__ import annotations
 
-import math
 import random
 
 import pytest
 
 from mobo.core.search_space import SearchSpace
-from mobo.ship.geometry import Geometry, _count_to_fill, _fill_to_count
+from mobo.ship.geometry import Geometry
 
 # The experiment's search space, kept in step with conf/experiment/snd_proxy.yaml.
 SPACE = {
     "parameters": {
-        "SiPad_WThickness": {"low": 5.0, "high": 15.0},
-        "SiPad_dim_z": {"low": 250, "high": 500},
-        "sipad_fill": {"low": 0.3, "high": 1.0},
+        "SiPad_WThickness": {"low": 10.0, "high": 30.0},
+        "SiPad_dim_z": {"low": 220, "high": 1000},
+        "SiPad_NLayers": {"low": 10, "high": 20, "kind": "int"},
         "SiTarget_WThickness": {"low": 2.0, "high": 5.0},
-        "SiTarget_spacing": {"low": 8.0, "high": 15.0},
-        "sitarget_fill": {"low": 0.5, "high": 1.0},
-        "xy_gap_frac": {"low": 0.1, "high": 1.0},
+        "SiTarget_NLayers": {"low": 80, "high": 120, "kind": "int"},
+        "SiTarget_XY_plane_gap_frac": {"low": 0.0, "high": 1.0},
     },
     "fixed": {
         "SiPad_frame_gap": 0.1,
         "SiTarget_module_offset": 1,
         "SiPad_layer_gap": "auto",
+        "SiTarget_layer_gap": "auto",
     },
 }
 
@@ -66,11 +68,12 @@ def test_baseline_is_inside_the_search_box(geometry, space):
 
 
 def test_baseline_params_reproduce_the_baseline_constants(geometry):
-    """The reparametrization must be exact on the design it is anchored to.
+    """Trial 0 must be the baseline exactly, not approximately.
 
-    Compared as rendered, not as raw values: constrained lengths are passed to
-    the template as verbatim strings (see `_exact_mm`), so `4.9` and `"4.9*mm"`
-    are the same constant expressed two ways.
+    A round trip through the search space is now the identity — every parameter
+    is a template constant — so this is cheap to assert and there is no longer
+    any inversion that could drift. Still compared as *rendered*, since that is
+    what actually reaches the XML.
     """
     constants = geometry.constants_for(geometry.baseline_params())
     assert set(constants) == set(geometry.base_constants)
@@ -107,12 +110,12 @@ def test_regression_baseline_xml_is_unchanged(geometry, tmp_path):
 
 VARIANTS = [
     ("baseline", {}),
-    ("thin_W", {"SiPad_WThickness": 5}),
-    ("short_sipad", {"SiPad_dim_z": 200}),
-    ("long_sipad", {"SiPad_dim_z": 500}),
-    ("thick_W", {"SiPad_WThickness": 15}),
-    ("wide_spacing", {"SiTarget_spacing": 15, "SiTarget_WThickness": 2}),
-    ("tight_spacing", {"SiTarget_spacing": 8, "SiTarget_WThickness": 5}),
+    ("thin_W", {"SiPad_WThickness": 10}),
+    ("short_sipad", {"SiPad_dim_z": 220}),
+    ("long_sipad", {"SiPad_dim_z": 1000}),
+    ("thick_W", {"SiPad_WThickness": 30, "SiPad_dim_z": 1000}),
+    ("few_sitarget_layers", {"SiTarget_NLayers": 80, "SiTarget_WThickness": 2}),
+    ("thick_sitarget_W", {"SiTarget_NLayers": 120, "SiTarget_WThickness": 5}),
 ]
 
 
@@ -122,18 +125,27 @@ def test_limits_are_exactly_the_boundary_of_feasibility(geometry, name, override
 
     This is the cross-check that keeps `limits()` honest about the `auto` layer
     gap, whose rule lives in config.resolve_auto and not in the template — the
-    one formula this module reproduces rather than reads.
+    one formula this module reproduces rather than reads. Both detectors are on
+    `auto` now, so the claim is made for both.
+
+    The two bounds cannot be probed at the same point, and that is not a defect
+    of the test. Since the pitch became `dim_z / NLayers`, the XY gap budget is
+    what the pitch leaves over, so the layer count and the gap trade against each
+    other: `sitarget_nlayers_max` is the count that fits with *no* gap, and
+    `sitarget_xy_gap_max` is the gap that fits at the count actually asked for.
+    Pinning both at once asks for a layer thinner than its own contents.
     """
     params = dict(geometry.base_constants, **overrides)
     limits = geometry.limits(params)
     assert limits.sipad_nlayers_max >= 1
     assert limits.sitarget_nlayers_max >= 1
 
+    # -- the layer counts, at the zero gap their bound assumes ----------------
     at_max = dict(
         params,
         SiPad_NLayers=limits.sipad_nlayers_max,
         SiTarget_NLayers=limits.sitarget_nlayers_max,
-        SiTarget_XY_plane_gap=limits.sitarget_xy_gap_max,
+        SiTarget_XY_plane_gap_frac=0,
     )
     assert geometry.check_constants(at_max) is None, (
         f"{name}: the limit itself is infeasible"
@@ -149,9 +161,23 @@ def test_limits_are_exactly_the_boundary_of_feasibility(geometry, name, override
         f"{name}: SiTarget limit is too low"
     )
 
-    over_gap = dict(at_max, SiTarget_XY_plane_gap=limits.sitarget_xy_gap_max * 1.01)
+    # -- the XY gap, at the layer count its bound was computed for ------------
+    # The fraction *is* the bound now: 1 must build (that is what "the Y plane
+    # can sit against the next absorber" means) and anything past it must not.
+    # The gap in mm is read back off the rendered geometry rather than asserted
+    # here, so the template stays the only place that owns the arithmetic.
+    at_gap = dict(params, SiTarget_XY_plane_gap_frac=1.0)
+    assert geometry.check_constants(at_gap) is None, (
+        f"{name}: the XY gap limit is itself infeasible"
+    )
+    resolved = geometry.resolve(at_gap)
+    assert resolved["SiTarget_XY_plane_gap"] == resolved["SiTarget_XY_plane_gap_max"], (
+        f"{name}: frac = 1 must land exactly on the maximum, not near it"
+    )
+
+    over_gap = dict(params, SiTarget_XY_plane_gap_frac=1.01)
     assert geometry.check_constants(over_gap) is not None, (
-        f"{name}: XY gap limit is too low"
+        f"{name}: a fraction above 1 must be rejected"
     )
 
 
@@ -159,10 +185,18 @@ def test_limits_are_exactly_the_boundary_of_feasibility(geometry, name, override
 def test_limits_match_the_parser(geometry, name, overrides):
     """The template's own `*_max` constants, read back off a rendered variant.
 
-    With a *fixed* layer gap the SiPad limit is exactly the template's
-    floor(dim_z / layer_thickness), so all three can be compared directly.
+    With *fixed* layer gaps both limits are exactly the template's
+    floor(dim_z / layer_thickness), so all three can be compared directly. The
+    `auto` case cannot be checked this way — that is what the feasibility test
+    above is for — because `auto` sizes the gap so the layers span the envelope,
+    which makes floor(dim_z / thickness) return the count it was handed.
     """
-    params = dict(geometry.base_constants, **overrides, SiPad_layer_gap=1.0)
+    params = dict(
+        geometry.base_constants,
+        **overrides,
+        SiPad_layer_gap=1.0,
+        SiTarget_layer_gap=1.0,
+    )
     limits = geometry.limits(params)
 
     resolved = geometry.resolve(
@@ -170,25 +204,24 @@ def test_limits_match_the_parser(geometry, name, overrides):
             params,
             SiPad_NLayers=limits.sipad_nlayers_max,
             SiTarget_NLayers=limits.sitarget_nlayers_max,
-            SiTarget_XY_plane_gap=limits.sitarget_xy_gap_max,
+            SiTarget_XY_plane_gap_frac=0,
         )
     )
     assert limits.sipad_nlayers_max == int(resolved["SiPad_NLayers_max"]), name
     assert limits.sitarget_nlayers_max == int(resolved["SiTarget_NLayers_max"]), name
-    assert limits.sitarget_xy_gap_max == pytest.approx(
-        resolved["SiTarget_XY_plane_gap_max"]
-    ), name
 
 
 def test_the_coupling_between_the_two_detectors_is_respected(geometry):
-    """SiTarget_dim_z = 1700 mm - SiPad_dim_z: growing one shrinks the other.
+    """SiTarget_dim_z = SiDetector_total_dim_z - SiPad_dim_z: growing one shrinks
+    the other.
 
     The trap the README warns about — changing SiPad_dim_z and forgetting to
-    recount SiTarget layers — cannot happen here, because the layer count is a
-    fraction of a limit that already knows about the coupling.
+    check that the SiTarget still fits — cannot happen here, because the limit
+    already knows about the coupling: a longer SiPad leaves room for fewer
+    SiTarget layers, and for more of its own.
     """
-    short = geometry.limits(dict(geometry.base_constants, SiPad_dim_z=250))
-    long = geometry.limits(dict(geometry.base_constants, SiPad_dim_z=500))
+    short = geometry.limits(dict(geometry.base_constants, SiPad_dim_z=220))
+    long = geometry.limits(dict(geometry.base_constants, SiPad_dim_z=1000))
     assert short.sitarget_nlayers_max > long.sitarget_nlayers_max
     assert short.sipad_nlayers_max < long.sipad_nlayers_max
 
@@ -196,51 +229,98 @@ def test_the_coupling_between_the_two_detectors_is_respected(geometry):
 # ── the cube is feasible by construction ─────────────────────────────────────
 
 
-def test_every_corner_of_the_cube_builds(geometry, space):
-    """2^7 corners: the extremes are where a bad parametrization breaks."""
+def test_every_feasible_corner_of_the_cube_builds(geometry, space):
+    """The extremes are where a bad parametrization breaks.
+
+    Not every corner is meant to build any more: with the layer counts searched
+    directly, "many thick SiPad layers in a short envelope" is a corner that
+    genuinely does not exist, and the gate is supposed to say so. What is tested
+    is the implication — whenever the rigid content fits, the renderer accepts
+    it — so a rejection can only ever come from the geometry not fitting, never
+    from the parametrization mangling a feasible point.
+    """
     import itertools
 
+    built = 0
     for corner in itertools.product([0.0, 1.0], repeat=space.dim):
         params = space.to_params(corner)
-        assert geometry.check(params) is None, (
-            f"corner {corner} -> {geometry.check(params)}"
-        )
+        reason = geometry.check(params)
+        if reason is None:
+            built += 1
+        else:
+            # `no caben` is resolve_auto's way of saying the rigid content of the
+            # layers exceeds the envelope. Anything else means the
+            # parametrization produced a nonsensical geometry, which is the bug
+            # this test exists to catch.
+            assert "no caben" in reason, f"corner {corner} rejected for: {reason}"
+    assert built >= 2 ** (space.dim - 1), (
+        f"only {built}/{2**space.dim} corners build; the box is mostly empty"
+    )
 
 
-def test_a_sample_of_the_cube_builds(geometry, space):
+def test_most_of_the_cube_builds(geometry, space):
+    """The interior has to be usable, not merely non-crashing.
+
+    The only geometries the gate may refuse are the ones that do not fit; if
+    that were most of the cube the optimizer would spend its budget discovering
+    the parametrization instead of the physics, which is the whole reason the
+    fill fractions existed. Two thirds is a floor, not a target — the measured
+    figure at the ranges of snd_proxy is around 80%.
+    """
     import random
 
     rng = random.Random(20260801)
-    for _ in range(60):
+    ok = 0
+    trials = 60
+    for _ in range(trials):
         params = space.to_params([rng.random() for _ in range(space.dim)])
-        assert geometry.check(params) is None, params
+        reason = geometry.check(params)
+        if reason is None:
+            ok += 1
+        else:
+            assert "no caben" in reason, (
+                f"rejected for something other than not fitting: {reason}"
+            )
+    assert ok >= 2 * trials // 3, f"only {ok}/{trials} of the cube builds"
 
 
-def test_fills_land_inside_the_limits(geometry, space):
+def test_the_xy_gap_lands_inside_its_limit(geometry, space):
+    """Anywhere in the box, the derived gap stays a legal slice within budget.
+
+    Read off the *rendered* geometry: the fraction is what this layer passes on,
+    and the whole claim is that the template turns it into a length that is both
+    positive (Geant4 rejects a slice of null extent) and no larger than the
+    budget it is a fraction of.
+    """
     import random
 
     rng = random.Random(7)
     for _ in range(40):
         params = space.to_params([rng.random() for _ in range(space.dim)])
-        limits = geometry.limits(params)
-        constants = geometry.constants_for(params)
-        assert 1 <= constants["SiPad_NLayers"] <= limits.sipad_nlayers_max
-        assert 1 <= constants["SiTarget_NLayers"] <= limits.sitarget_nlayers_max
-        gap = float(str(constants["SiTarget_XY_plane_gap"]).replace("*mm", ""))
-        assert 0 <= gap <= limits.sitarget_xy_gap_max
+        resolved = geometry.resolve(geometry.constants_for(params))
+        gap, gap_max = (
+            resolved["SiTarget_XY_plane_gap"],
+            resolved["SiTarget_XY_plane_gap_max"],
+        )
+        assert 0 < gap <= gap_max
 
 
 # ── the gate rejects what it should ──────────────────────────────────────────
 
 
 def test_infeasible_geometry_is_rejected_without_raising(geometry):
-    """The classic mistake: shrink SiPad and keep the old SiTarget layer count.
+    """The classic mistake: keep a layer count a shrunken envelope cannot hold.
 
-    SiTarget_dim_z = 1700 - 200 = 1500 mm, which at 11 mm spacing holds 136
-    layers, not the 120+ the baseline would imply... and SiPad at 200 mm holds
-    12 layers, not 22.
+    20 SiPad layers of 30 mm of tungsten are 711 mm of rigid content, and the
+    envelope offered is 250 mm. `auto` has no slack to give and says so instead
+    of raising.
     """
-    bad = dict(geometry.base_constants, SiPad_dim_z=200)  # keeps SiPad_NLayers=22
+    bad = dict(
+        geometry.base_constants,
+        SiPad_dim_z=250,
+        SiPad_WThickness=30,
+        SiPad_NLayers=20,
+    )
     reason = geometry.check_constants(bad)
     assert reason is not None
     assert "SiPad" in reason
@@ -261,6 +341,7 @@ def test_touching_envelopes_are_not_an_overlap(geometry):
         awkward,
         SiPad_NLayers=limits.sipad_nlayers_max,
         SiTarget_NLayers=limits.sitarget_nlayers_max,
+        SiTarget_XY_plane_gap_frac=0,  # the count bound is the one with no gap
     )
     assert geometry.check_constants(constants) is None
 
@@ -270,7 +351,7 @@ def test_touching_envelopes_are_not_an_overlap(geometry):
 
 
 def test_unknown_parameter_names_are_a_hard_error(geometry):
-    with pytest.raises(RuntimeError, match="neither a template constant"):
+    with pytest.raises(RuntimeError, match="not a template constant"):
         geometry.constants_for({"SiPad_WThicknes": 10})  # typo
 
 
@@ -282,53 +363,44 @@ def test_check_reports_the_reason_rather_than_raising(geometry):
     assert reason is not None and reason
 
 
-# ── the fill <-> count map ───────────────────────────────────────────────────
-
-
-def test_fill_to_count_is_bounded_and_onto():
-    maximum = 23
-    counts = {_fill_to_count(f / 1000.0, maximum) for f in range(0, 1001)}
-    assert min(counts) == 1 and max(counts) == maximum
-    assert counts == set(range(1, maximum + 1))
-
-
-def test_count_to_fill_round_trips_every_count():
-    for maximum in (1, 5, 23, 120, 137):
-        for count in range(1, maximum + 1):
-            assert _fill_to_count(_count_to_fill(count, maximum), maximum) == count
-
-
-def test_count_to_fill_lands_mid_interval():
-    """Mid-interval, not on the edge: an edge value is one ulp from the wrong count."""
-    assert _count_to_fill(22, 23) == pytest.approx(22.5 / 23)
-    assert _count_to_fill(23, 23) == 1.0  # clipped, the top of the range
-    assert math.isclose(_fill_to_count(1.0, 23), 23)
-
-
 # ── the boundary of the box, where the acquisition likes to sit ──────────────
 
 
-@pytest.mark.parametrize("free", ["xy_gap_frac", "sitarget_fill", "sipad_fill"])
-def test_a_fill_pinned_at_its_maximum_always_builds(geometry, space, free):
-    """The baseline sits at the top of two of these ranges, so the scan runs
-    downward from a boundary — and boundaries are exactly where `optimize_acqf`
-    puts its candidates. A limit that is only reachable in theory is not a
-    limit, it is a third of the budget spent on INFEASIBLE trials.
+def test_the_xy_gap_pinned_at_its_maximum_always_builds(geometry, space):
+    """Boundaries are exactly where `optimize_acqf` puts its candidates, so a
+    limit that is only reachable in theory is not a limit — it is a third of the
+    budget spent on INFEASIBLE trials.
 
-    This caught a real one: `SiTarget_XY_plane_gap` is compared against its own
-    derived maximum inside the template, and rendering it through
-    `format_value`'s six significant digits rounded it *up* past that maximum
-    for about a third of parameter combinations.
+    This caught a real one, back when this layer turned the fraction into a
+    length itself: the gap is compared against its own derived maximum inside
+    the template, and rendering it through `format_value`'s six significant
+    digits rounded it *up* past that maximum for about a third of parameter
+    combinations. The interpolation lives in the template now and the fraction
+    is written at full precision, so the failure mode is gone by construction —
+    this test is what keeps it that way.
+
+    Only the geometries that fit are asserted on: a fraction of 1.0 cannot
+    rescue a layer count the envelope was never going to hold.
     """
-    index = space.names.index(free)
+    index = space.names.index("SiTarget_XY_plane_gap_frac")
     rng = random.Random(90210)
+    checked = 0
     for _ in range(40):
         unit = [rng.random() for _ in range(space.dim)]
         unit[index] = 1.0
         params = space.to_params(unit)
+        limits = geometry.limits(params)
+        constants = geometry.constants_for(params)
+        if (
+            constants["SiPad_NLayers"] > limits.sipad_nlayers_max
+            or constants["SiTarget_NLayers"] > limits.sitarget_nlayers_max
+        ):
+            continue
         assert geometry.check(params) is None, (
-            f"{free}=1.0 rejected: {geometry.check(params)}"
+            f"SiTarget_XY_plane_gap_frac=1.0 rejected: {geometry.check(params)}"
         )
+        checked += 1
+    assert checked, "no feasible sample to check the gap maximum on"
 
 
 def test_the_gap_at_its_maximum_survives_rendering(geometry):
@@ -341,12 +413,9 @@ def test_the_gap_at_its_maximum_survives_rendering(geometry):
     for _ in range(25):
         params = dict(
             geometry.base_constants,
-            SiTarget_spacing=rng.uniform(8.0, 15.0),
+            SiTarget_NLayers=rng.randint(80, 120),
             SiTarget_WThickness=rng.uniform(2.0, 5.0),
         )
-        limits = geometry.limits(params)
-        constants = geometry.constants_for(dict(params, xy_gap_frac=1.0))
-        resolved = geometry.resolve(
-            dict(constants, SiTarget_NLayers=limits.sitarget_nlayers_max)
-        )
+        constants = geometry.constants_for(dict(params, SiTarget_XY_plane_gap_frac=1.0))
+        resolved = geometry.resolve(constants)
         assert resolved["SiTarget_XY_plane_gap"] <= resolved["SiTarget_XY_plane_gap_max"]

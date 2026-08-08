@@ -122,11 +122,11 @@ def test_the_analytic_metrics_match_the_hand_computed_baseline(baseline_run):
     from the compact file that ddsim actually loaded.
     """
     _evaluator, _trial, result = baseline_run
-    assert result.metrics["cost_proxy"] == pytest.approx(1585.186, abs=1e-3)
-    assert result.metrics["si_area_m2"] == pytest.approx(44.389223, abs=1e-5)
-    assert result.metrics["w_mass_kg"] == pytest.approx(2535.0936, abs=1e-3)
-    assert result.metrics["n_channels"] == 4000512
-    assert result.metrics["sipad_nlayers"] == 22
+    assert result.metrics["cost_proxy"] == pytest.approx(1413.374, abs=1e-3)
+    assert result.metrics["si_area_m2"] == pytest.approx(40.913312, abs=1e-5)
+    assert result.metrics["w_mass_kg"] == pytest.approx(1859.748, abs=1e-3)
+    assert result.metrics["n_channels"] == 3889920
+    assert result.metrics["sipad_nlayers"] == 10
 
 
 def test_the_same_seed_gives_the_same_physics(baseline_run, tmp_path_factory):
