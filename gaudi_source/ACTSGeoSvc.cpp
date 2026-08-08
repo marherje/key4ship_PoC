@@ -534,21 +534,31 @@ StatusCode ACTSGeoSvc::initialize() {
               return a->center(m_gctx).x() < b->center(m_gctx).x();
             });
 
-  // allPlanes sorted by z matches m_allSurfaces sorted by ACTS-X — build map.
+  // allPlanes sorted by z matches m_allSurfaces sorted by ACTS-X — build the
+  // address map and the per-detector partition in the same pass. Both need the
+  // detID that only the TGeo walk knows; recovering it later from surface
+  // positions is exactly the largest-gap heuristic that surfacesOf() exists to
+  // replace.
   if (allPlanes.size() == m_allSurfaces.size()) {
     for (std::size_t i = 0; i < allPlanes.size(); ++i) {
       const auto& pi = allPlanes[i];
       m_surfaceByAddressMap[{pi.detID, pi.station, pi.layerInDet, pi.plane}]
           = m_allSurfaces[i];
+      if (pi.detID >= 0 && pi.detID < 3)
+        m_surfacesByDet[pi.detID].push_back(m_allSurfaces[i]);
     }
   } else {
     warning() << "[ACTSGeoSvc] allPlanes.size()=" << allPlanes.size()
               << " != m_allSurfaces.size()=" << m_allSurfaces.size()
-              << " — surfaceByAddress map not populated." << endmsg;
+              << " — surfaceByAddress map and per-detector surface lists not "
+                 "populated." << endmsg;
   }
 
   info() << "[ACTSGeoSvc] TrackingGeometry built. Total surfaces: "
-         << m_allSurfaces.size() << endmsg;
+         << m_allSurfaces.size()
+         << " (SiTarget=" << m_surfacesByDet[0].size()
+         << " SiPad="     << m_surfacesByDet[1].size()
+         << " MTC="       << m_surfacesByDet[2].size() << ")" << endmsg;
 
   return StatusCode::SUCCESS;
 }
@@ -571,6 +581,12 @@ const Acts::TrackingGeometry& ACTSGeoSvc::trackingGeometry() const {
 
 const std::vector<const Acts::Surface*>& ACTSGeoSvc::allSurfaces() const {
   return m_allSurfaces;
+}
+
+const std::vector<const Acts::Surface*>& ACTSGeoSvc::surfacesOf(int detID) const {
+  static const std::vector<const Acts::Surface*> kEmpty;
+  if (detID < 0 || detID >= static_cast<int>(m_surfacesByDet.size())) return kEmpty;
+  return m_surfacesByDet[detID];
 }
 
 const Acts::Surface* ACTSGeoSvc::surfaceByAddress(

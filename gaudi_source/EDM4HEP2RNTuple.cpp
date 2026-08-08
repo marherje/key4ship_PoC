@@ -257,77 +257,97 @@ public:
             return StatusCode::FAILURE;
           }
 
-          // Build minimal track RNTuple: one row per track
-          auto model = ROOT::RNTupleModel::Create();
+          // One RNTuple pair per requested collection. TrackCollections wins;
+          // an empty one falls back to the historical single-collection
+          // property, so every steering written before this change keeps
+          // producing exactly the same file.
+          std::vector<std::string> trackColls = m_trackCollections.value();
+          if (trackColls.empty()) trackColls = {m_trackCollectionName.value()};
 
-          auto fWindowID = model->MakeField<int>("window_id");
-          auto fTrackID  = model->MakeField<int>("track_id");
-          auto fChi2     = model->MakeField<float>("chi2");
-          auto fNdf      = model->MakeField<int>("ndf");
-          auto fSeedX    = model->MakeField<float>("seed_x");  // DD4hep transverse X [mm]
-          auto fSeedY    = model->MakeField<float>("seed_y");  // DD4hep transverse Y [mm]
+          for (const auto& cname : trackColls) {
+            TrackNTuple tn;
+            tn.collection = cname;
 
-          m_fTrackWindowID = fWindowID.get();
-          m_fTrackID       = fTrackID.get();
-          m_fTrackChi2     = fChi2.get();
-          m_fTrackNdf      = fNdf.get();
-          m_fTrackSeedX    = fSeedX.get();
-          m_fTrackSeedY    = fSeedY.get();
+            // ---- one row per track ----
+            auto model = ROOT::RNTupleModel::Create();
+            auto fWindowID = model->MakeField<int>("window_id");
+            auto fTrackID  = model->MakeField<int>("track_id");
+            auto fChi2     = model->MakeField<float>("chi2");
+            auto fNdf      = model->MakeField<int>("ndf");
+            auto fSeedX    = model->MakeField<float>("seed_x");  // DD4hep transverse X [mm]
+            auto fSeedY    = model->MakeField<float>("seed_y");  // DD4hep transverse Y [mm]
+            // Track::type. For GlobalTracks this is the composition bitmask
+            // (1=SiTarget, 2=SiPad, 4=MTC), which is the only place the
+            // downstream tools can learn what a spliced track is made of.
+            auto fType     = model->MakeField<int>("type");
 
-          m_trackIntPtrs.push_back(std::move(fWindowID));
-          m_trackIntPtrs.push_back(std::move(fTrackID));
-          m_trackIntPtrs.push_back(std::move(fNdf));
-          m_trackFloatPtrs.push_back(std::move(fChi2));
-          m_trackFloatPtrs.push_back(std::move(fSeedX));
-          m_trackFloatPtrs.push_back(std::move(fSeedY));
+            tn.fWindowID = fWindowID.get();
+            tn.fTrackID  = fTrackID.get();
+            tn.fChi2     = fChi2.get();
+            tn.fNdf      = fNdf.get();
+            tn.fSeedX    = fSeedX.get();
+            tn.fSeedY    = fSeedY.get();
+            tn.fType     = fType.get();
 
-          m_trackWriter = ROOT::RNTupleWriter::Append(
-            std::move(model), m_trackCollectionName.value(), *m_outputTFile);
+            tn.intPtrs.push_back(std::move(fWindowID));
+            tn.intPtrs.push_back(std::move(fTrackID));
+            tn.intPtrs.push_back(std::move(fNdf));
+            tn.intPtrs.push_back(std::move(fType));
+            tn.floatPtrs.push_back(std::move(fChi2));
+            tn.floatPtrs.push_back(std::move(fSeedX));
+            tn.floatPtrs.push_back(std::move(fSeedY));
 
-          // Per-surface track states RNTuple
-          {
-            auto tsModel  = ROOT::RNTupleModel::Create();
-            auto fWin     = tsModel->MakeField<int>("window_id");
-            auto fTrkId   = tsModel->MakeField<int>("track_id");
-            auto fStIdx   = tsModel->MakeField<int>("state_idx");
-            auto fX       = tsModel->MakeField<float>("x");
-            auto fY       = tsModel->MakeField<float>("y");
-            auto fZ       = tsModel->MakeField<float>("z");
+            tn.trackWriter = ROOT::RNTupleWriter::Append(
+                std::move(model), cname, *m_outputTFile);
 
-            auto fLoc0  = tsModel->MakeField<float>("loc0");
-            auto fTilt  = tsModel->MakeField<float>("tilt");
+            // ---- one row per surface per track ----
+            auto tsModel = ROOT::RNTupleModel::Create();
+            auto fWin    = tsModel->MakeField<int>("window_id");
+            auto fTrkId  = tsModel->MakeField<int>("track_id");
+            auto fStIdx  = tsModel->MakeField<int>("state_idx");
+            auto fX      = tsModel->MakeField<float>("x");
+            auto fY      = tsModel->MakeField<float>("y");
+            auto fZ      = tsModel->MakeField<float>("z");
+            auto fLoc0   = tsModel->MakeField<float>("loc0");
+            auto fTilt   = tsModel->MakeField<float>("tilt");
             auto fChi2ts = tsModel->MakeField<float>("chi2");
             auto fNmeas  = tsModel->MakeField<int>("nmeas");
 
-            m_fTsWindowID = fWin.get();
-            m_fTsTrackID  = fTrkId.get();
-            m_fTsStateIdx = fStIdx.get();
-            m_fTsX        = fX.get();
-            m_fTsY        = fY.get();
-            m_fTsZ        = fZ.get();
-            m_fTsLoc0     = fLoc0.get();
-            m_fTsTilt     = fTilt.get();
-            m_fTsChi2     = fChi2ts.get();
-            m_fTsNmeas    = fNmeas.get();
+            tn.fTsWindowID = fWin.get();
+            tn.fTsTrackID  = fTrkId.get();
+            tn.fTsStateIdx = fStIdx.get();
+            tn.fTsX        = fX.get();
+            tn.fTsY        = fY.get();
+            tn.fTsZ        = fZ.get();
+            tn.fTsLoc0     = fLoc0.get();
+            tn.fTsTilt     = fTilt.get();
+            tn.fTsChi2     = fChi2ts.get();
+            tn.fTsNmeas    = fNmeas.get();
 
-            m_tsIntPtrs.push_back(std::move(fWin));
-            m_tsIntPtrs.push_back(std::move(fTrkId));
-            m_tsIntPtrs.push_back(std::move(fStIdx));
-            m_tsIntPtrs.push_back(std::move(fNmeas));
-            m_tsFloatPtrs.push_back(std::move(fX));
-            m_tsFloatPtrs.push_back(std::move(fY));
-            m_tsFloatPtrs.push_back(std::move(fZ));
-            m_tsFloatPtrs.push_back(std::move(fLoc0));
-            m_tsFloatPtrs.push_back(std::move(fTilt));
-            m_tsFloatPtrs.push_back(std::move(fChi2ts));
+            tn.intPtrs.push_back(std::move(fWin));
+            tn.intPtrs.push_back(std::move(fTrkId));
+            tn.intPtrs.push_back(std::move(fStIdx));
+            tn.intPtrs.push_back(std::move(fNmeas));
+            tn.floatPtrs.push_back(std::move(fX));
+            tn.floatPtrs.push_back(std::move(fY));
+            tn.floatPtrs.push_back(std::move(fZ));
+            tn.floatPtrs.push_back(std::move(fLoc0));
+            tn.floatPtrs.push_back(std::move(fTilt));
+            tn.floatPtrs.push_back(std::move(fChi2ts));
 
-            m_trackStatesWriter = ROOT::RNTupleWriter::Append(
-                std::move(tsModel), "ACTSTrackStates", *m_outputTFile);
+            tn.statesWriter = ROOT::RNTupleWriter::Append(
+                std::move(tsModel), statesNTupleName(cname), *m_outputTFile);
+
+            info() << "[EDM4HEP2RNTuple] Track RNTuples '" << cname << "' / '"
+                   << statesNTupleName(cname) << "'" << endmsg;
+
+            m_trackNTuples.push_back(std::move(tn));
           }
 
           info() << "[EDM4HEP2RNTuple] Track export enabled: '"
                  << m_trackFile.value() << "' ("
-                 << m_nTrackEvents << " events)" << endmsg;
+                 << m_nTrackEvents << " events, "
+                 << m_trackNTuples.size() << " collection(s))" << endmsg;
 
         } catch (const std::exception& e) {
           error() << "[EDM4HEP2RNTuple] Cannot open track file '"
@@ -496,66 +516,81 @@ public:
       }
 
       // ---- Export tracks if enabled ----------------------------------------
-      if (m_trackWriter && m_trackReader &&
+      if (!m_trackNTuples.empty() && m_trackReader &&
           static_cast<std::size_t>(windowID) < m_nTrackEvents) {
+        // The frame is read ONCE and every requested collection is taken out of
+        // it: with four collections a per-collection read would decompress the
+        // same window four times.
+        std::optional<podio::Frame> tframe;
         try {
-          auto entry  = m_trackReader->readEntry("events",
-                            static_cast<std::size_t>(windowID));
-          auto tframe = podio::Frame(std::move(entry));
-          const auto& tracks = tframe.get<edm4hep::TrackCollection>(m_trackCollectionName.value());
+          tframe.emplace(m_trackReader->readEntry(
+              "events", static_cast<std::size_t>(windowID)));
+        } catch (const std::exception& e) {
+          warning() << "[EDM4HEP2RNTuple] Could not read track frame for window "
+                    << windowID << ": " << e.what() << " — skipping." << endmsg;
+        }
 
-          for (int iTrack = 0; iTrack < static_cast<int>(tracks.size()); ++iTrack) {
-            const auto& track  = tracks[iTrack];
-            const auto& states = track.getTrackStates();
+        if (tframe) {
+          for (auto& tn : m_trackNTuples) {
+            try {
+              const auto& tracks =
+                  tframe->get<edm4hep::TrackCollection>(tn.collection);
 
-            // Seed position stored in first TrackState (location=AtIP)
-            // D0 = seed transverse X [mm], Z0 = seed transverse Y [mm]
-            float seedX = 0.0f, seedY = 0.0f;
-            for (const auto& ts : states) {
-              if (ts.location == edm4hep::TrackState::AtIP) {
-                seedX = ts.D0;
-                seedY = ts.Z0;
-                break;
+              for (int iTrack = 0; iTrack < static_cast<int>(tracks.size()); ++iTrack) {
+                const auto& track  = tracks[iTrack];
+                const auto& states = track.getTrackStates();
+
+                // Seed position stored in first TrackState (location=AtIP)
+                // D0 = seed transverse X [mm], Z0 = seed transverse Y [mm]
+                float seedX = 0.0f, seedY = 0.0f;
+                for (const auto& ts : states) {
+                  if (ts.location == edm4hep::TrackState::AtIP) {
+                    seedX = ts.D0;
+                    seedY = ts.Z0;
+                    break;
+                  }
+                }
+
+                *tn.fWindowID = static_cast<int>(windowID);
+                *tn.fTrackID  = iTrack;
+                *tn.fChi2     = track.getChi2();
+                *tn.fNdf      = track.getNdf();
+                *tn.fSeedX    = seedX;
+                *tn.fSeedY    = seedY;
+                *tn.fType     = track.getType();
+                tn.trackWriter->Fill();
+
+                // Per-surface states (AtOther, tip→seed order; reverse for beam order)
+                if (tn.statesWriter) {
+                  std::vector<const edm4hep::TrackState*> surfStates;
+                  for (const auto& ts : track.getTrackStates()) {
+                    if (ts.location == edm4hep::TrackState::AtOther)
+                      surfStates.push_back(&ts);
+                  }
+                  std::reverse(surfStates.begin(), surfStates.end());
+                  const int nMeasStates = static_cast<int>(surfStates.size());
+                  for (int si = 0; si < nMeasStates; ++si) {
+                    const auto& ts  = *surfStates[si];
+                    *tn.fTsWindowID = static_cast<int>(windowID);
+                    *tn.fTsTrackID  = iTrack;
+                    *tn.fTsStateIdx = si;
+                    *tn.fTsX        = ts.referencePoint.x;
+                    *tn.fTsY        = ts.referencePoint.y;
+                    *tn.fTsZ        = ts.referencePoint.z;
+                    *tn.fTsLoc0     = ts.D0;     // raw ACTS eBoundLoc0 (strip measurement)
+                    *tn.fTsTilt     = ts.omega;  // surface stereo tilt: ±sin(α) or 0
+                    *tn.fTsChi2     = ts.Z0;     // per-state innovation chi² (carried in Z0)
+                    *tn.fTsNmeas    = nMeasStates;
+                    tn.statesWriter->Fill();
+                  }
+                }
               }
-            }
-
-            *m_fTrackWindowID = static_cast<int>(windowID);
-            *m_fTrackID       = iTrack;
-            *m_fTrackChi2     = track.getChi2();
-            *m_fTrackNdf      = track.getNdf();
-            *m_fTrackSeedX    = seedX;
-            *m_fTrackSeedY    = seedY;
-            m_trackWriter->Fill();
-
-            // Per-surface states (AtOther, tip→seed order; reverse for beam order)
-            if (m_trackStatesWriter) {
-              std::vector<const edm4hep::TrackState*> surfStates;
-              for (const auto& ts : track.getTrackStates()) {
-                if (ts.location == edm4hep::TrackState::AtOther)
-                  surfStates.push_back(&ts);
-              }
-              std::reverse(surfStates.begin(), surfStates.end());
-              const int nMeasStates = static_cast<int>(surfStates.size());
-              for (int si = 0; si < nMeasStates; ++si) {
-                const auto& ts  = *surfStates[si];
-                *m_fTsWindowID  = static_cast<int>(windowID);
-                *m_fTsTrackID   = iTrack;
-                *m_fTsStateIdx  = si;
-                *m_fTsX         = ts.referencePoint.x;
-                *m_fTsY         = ts.referencePoint.y;
-                *m_fTsZ         = ts.referencePoint.z;
-                *m_fTsLoc0      = ts.D0;     // raw ACTS eBoundLoc0 (strip measurement)
-                *m_fTsTilt      = ts.omega;  // surface stereo tilt: ±sin(α) or 0
-                *m_fTsChi2      = ts.Z0;     // per-state innovation chi² (carried in Z0)
-                *m_fTsNmeas     = nMeasStates;
-                m_trackStatesWriter->Fill();
-              }
+            } catch (const std::exception& e) {
+              warning() << "[EDM4HEP2RNTuple] Could not read track collection '"
+                        << tn.collection << "' for window " << windowID << ": "
+                        << e.what() << " — skipping." << endmsg;
             }
           }
-        } catch (const std::exception& e) {
-          warning() << "[EDM4HEP2RNTuple] Could not read tracks for window "
-                    << windowID << ": " << e.what()
-                    << " — skipping." << endmsg;
         }
       }
 
@@ -576,14 +611,17 @@ public:
       m_measFields.clear();
       m_measDecoders.clear();
 
-      if (m_trackStatesWriter) { m_trackStatesWriter.reset(); }
-      m_tsIntPtrs.clear();
-      m_tsFloatPtrs.clear();
-
-      if (m_trackWriter) { m_trackWriter.reset(); }
+      // Flush the states writer before the track writer of each collection,
+      // then drop the field owners — same order the single-collection version
+      // used, applied per collection.
+      for (auto& tn : m_trackNTuples) {
+        if (tn.statesWriter) tn.statesWriter.reset();
+        if (tn.trackWriter)  tn.trackWriter.reset();
+        tn.intPtrs.clear();
+        tn.floatPtrs.clear();
+      }
+      m_trackNTuples.clear();
       m_trackReader.reset();
-      m_trackIntPtrs.clear();
-      m_trackFloatPtrs.clear();
 
       for (auto& w : m_writers) w.reset();  // flush all writers before closing file
       m_writers.clear();
@@ -652,7 +690,18 @@ private:
 
   Gaudi::Property<std::string> m_trackCollectionName{
     this, "TrackCollectionName", "ACTSTracks",
-    "Name of the track collection inside TrackFile."};
+    "Name of the track collection inside TrackFile. Single-collection form, "
+    "kept for the steering files that already set it; ignored when "
+    "TrackCollections is given."};
+
+  Gaudi::Property<std::vector<std::string>> m_trackCollections{
+    this, "TrackCollections", {},
+    "Track collections to export from TrackFile, one RNTuple pair each "
+    "(<name> and <name>States; 'ACTSTracks' keeps the legacy "
+    "'ACTSTrackStates'). Empty falls back to the single TrackCollectionName, "
+    "which is what every pre-existing job5 steering does. The sequential "
+    "tracker wants all four: GlobalTracks, SiTargetTracks, SiPadTracks, "
+    "MTCTracks."};
 
   // Measurement collections (TrackerHit3D from converters)
   Gaudi::Property<std::vector<std::string>> m_measCollections{
@@ -739,32 +788,47 @@ private:
   mutable std::unique_ptr<podio::ROOTReader> m_trackReader;
   mutable std::size_t                        m_nTrackEvents{0};
 
-  // Track RNTuple field pointers (flat, no nested structs)
-  mutable std::unique_ptr<ROOT::RNTupleWriter> m_trackWriter;
-  mutable int*   m_fTrackWindowID = nullptr;
-  mutable int*   m_fTrackID       = nullptr;
-  mutable float* m_fTrackChi2     = nullptr;
-  mutable int*   m_fTrackNdf      = nullptr;
-  mutable float* m_fTrackSeedX    = nullptr;
-  mutable float* m_fTrackSeedY    = nullptr;
-  // Keep shared_ptrs alive after model is moved into writer
-  mutable std::vector<std::shared_ptr<int>>   m_trackIntPtrs;
-  mutable std::vector<std::shared_ptr<float>> m_trackFloatPtrs;
+  // One of these per exported track collection. The sequential tracker writes
+  // four (GlobalTracks + the three local ones), the global tracker one; the
+  // schema is identical for all of them, so the readers downstream only need to
+  // be pointed at a different RNTuple name.
+  struct TrackNTuple {
+    std::string collection;
+    std::unique_ptr<ROOT::RNTupleWriter> trackWriter;
+    std::unique_ptr<ROOT::RNTupleWriter> statesWriter;
 
-  // Per-surface track states RNTuple ("ACTSTrackStates"), one row per surface per track.
-  mutable std::unique_ptr<ROOT::RNTupleWriter> m_trackStatesWriter;
-  mutable int*   m_fTsWindowID  = nullptr;
-  mutable int*   m_fTsTrackID   = nullptr;
-  mutable int*   m_fTsStateIdx  = nullptr;
-  mutable float* m_fTsX         = nullptr;
-  mutable float* m_fTsY         = nullptr;
-  mutable float* m_fTsZ         = nullptr;
-  mutable float* m_fTsLoc0      = nullptr;
-  mutable float* m_fTsTilt      = nullptr;
-  mutable float* m_fTsChi2      = nullptr;
-  mutable int*   m_fTsNmeas     = nullptr;
-  mutable std::vector<std::shared_ptr<int>>   m_tsIntPtrs;
-  mutable std::vector<std::shared_ptr<float>> m_tsFloatPtrs;
+    int*   fWindowID = nullptr;
+    int*   fTrackID  = nullptr;
+    float* fChi2     = nullptr;
+    int*   fNdf      = nullptr;
+    float* fSeedX    = nullptr;
+    float* fSeedY    = nullptr;
+    int*   fType     = nullptr;
+
+    int*   fTsWindowID = nullptr;
+    int*   fTsTrackID  = nullptr;
+    int*   fTsStateIdx = nullptr;
+    float* fTsX        = nullptr;
+    float* fTsY        = nullptr;
+    float* fTsZ        = nullptr;
+    float* fTsLoc0     = nullptr;
+    float* fTsTilt     = nullptr;
+    float* fTsChi2     = nullptr;
+    int*   fTsNmeas    = nullptr;
+
+    // Keep the shared_ptrs alive after the models are moved into the writers.
+    std::vector<std::shared_ptr<int>>   intPtrs;
+    std::vector<std::shared_ptr<float>> floatPtrs;
+  };
+  mutable std::vector<TrackNTuple> m_trackNTuples;
+
+  // RNTuple name for the per-surface states of a track collection. "ACTSTracks"
+  // keeps its historical "ACTSTrackStates" so files and readers predating the
+  // multi-collection support are bit-compatible; anything else gets the
+  // regular <collection>States.
+  static std::string statesNTupleName(const std::string& collection) {
+    return (collection == "ACTSTracks") ? "ACTSTrackStates" : collection + "States";
+  }
 
   // Window counter: incremented in each execute() call.
   mutable std::atomic<long long> m_windowCount{0};

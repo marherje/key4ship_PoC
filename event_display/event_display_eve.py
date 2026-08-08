@@ -392,8 +392,45 @@ def extract_z_from_geometry(compact_xml, config):
 # ---------------------------------------------------------------------------
 # TRACK READER (before TEveManager)
 # ---------------------------------------------------------------------------
-def read_track_points(hits_file, window_id):
-    """Read ACTSTracks seeds from ShipHits.root before TEve is created."""
+# Track RNTuple pairs the display knows about, in drawing order.
+#   (tracks ntuple, states ntuple, legend label, kind)
+# "global" is drawn solid, "local" dashed. The sequential tracker writes the
+# first four; ACTSTracks is the global tracker's single collection and is kept
+# last so old ShipHits.root files still display exactly as before.
+TRACK_NTUPLES = [
+    ("GlobalTracks",   "GlobalTracksStates",   "Global",          "global"),
+    ("SiTargetTracks", "SiTargetTracksStates", "SiTarget (local)", "local"),
+    ("SiPadTracks",    "SiPadTracksStates",    "SiPad (local)",    "local"),
+    ("MTCTracks",      "MTCTracksStates",      "MTC (local)",      "local"),
+    ("ACTSTracks",     "ACTSTrackStates",      "Track",            "global"),
+]
+
+
+def discover_track_ntuples(hits_file):
+    """Which of TRACK_NTUPLES actually exist in this file.
+
+    The file decides, not the caller: a ShipHits.root from the global tracker
+    has ACTSTracks only, one from the sequential tracker has the four
+    per-role collections, and the display has to render either without being
+    told which produced it.
+    """
+    present = set()
+    f = ROOT.TFile.Open(hits_file)
+    if f and not f.IsZombie():
+        for key in f.GetListOfKeys():
+            present.add(key.GetName())
+        f.Close()
+    found = [t for t in TRACK_NTUPLES if t[0] in present]
+    # A file with the sequential collections never also has ACTSTracks, but be
+    # explicit rather than relying on it.
+    if any(t[0] == "GlobalTracks" for t in found):
+        found = [t for t in found if t[0] != "ACTSTracks"]
+    return found
+
+
+def read_track_points(hits_file, window_id, tracks_ntuple="ACTSTracks",
+                      states_ntuple="ACTSTrackStates"):
+    """Read one track RNTuple's seeds from ShipHits.root before TEve exists."""
     if not os.path.exists(hits_file):
         print(f"[Tracks] ERROR: file not found: '{hits_file}'")
         raise SystemExit(1)
@@ -405,7 +442,7 @@ def read_track_points(hits_file, window_id):
       SNDEve::gZ.clear(); SNDEve::gE.clear();
       SNDEve::gSrc.clear(); SNDEve::gPlane.clear();
       try {{
-        auto r       = ROOT::RNTupleReader::Open("ACTSTracks", "{hits_file}");
+        auto r       = ROOT::RNTupleReader::Open("{tracks_ntuple}", "{hits_file}");
         auto vwin    = r->GetView<int>("window_id");
         auto vtid    = r->GetView<int>("track_id");
         auto vchi2   = r->GetView<float>("chi2");
@@ -427,9 +464,9 @@ def read_track_points(hits_file, window_id):
 
     n = ROOT.SNDEve.gX.size()
     if n == 0:
-        print(f"[Tracks] No tracks in window {window_id}.")
+        print(f"[Tracks] {tracks_ntuple}: no tracks in window {window_id}.")
         return []
-    print(f"[Tracks] Window {window_id}: {n} track(s) found.")
+    print(f"[Tracks] {tracks_ntuple}: window {window_id}: {n} track(s) found.")
     seeds = []
     for i in range(n):
         seeds.append({
@@ -483,7 +520,7 @@ def read_track_points(hits_file, window_id):
     n_z   = ROOT.SNDEve.gZ.size()
     layer_zs_mm = sorted([ROOT.SNDEve.gZ[i] for i in range(n_z)])
 
-    states = read_track_states(hits_file, window_id)
+    states = read_track_states(hits_file, window_id, states_ntuple)
 
     track_data = []
     for seed in seeds:
@@ -515,16 +552,17 @@ def read_track_points(hits_file, window_id):
 # ---------------------------------------------------------------------------
 # PER-SURFACE TRACK STATE READER
 # ---------------------------------------------------------------------------
-def read_track_states(hits_file, window_id):
-    """Read ACTSTrackStates RNTuple; returns {track_id: [(x_cm, y_cm, z_cm), ...]}
-    with stereo pairing applied for MTC SciFi U/V planes."""
+def read_track_states(hits_file, window_id, states_ntuple="ACTSTrackStates"):
+    """Read a per-surface states RNTuple; returns
+    {track_id: [(x_cm, y_cm, z_cm), ...]} with stereo pairing applied for MTC
+    SciFi U/V planes. The schema is the same for every track collection."""
     ROOT.gROOT.ProcessLine(f"""
     {{
       SNDEve::gTsX.clear(); SNDEve::gTsY.clear();
       SNDEve::gTsZ.clear(); SNDEve::gTsTrackId.clear();
       SNDEve::gTsLoc0.clear(); SNDEve::gTsTilt.clear();
       try {{
-        auto r     = ROOT::RNTupleReader::Open("ACTSTrackStates", "{hits_file}");
+        auto r     = ROOT::RNTupleReader::Open("{states_ntuple}", "{hits_file}");
         auto vwin  = r->GetView<int>("window_id");
         auto vtid  = r->GetView<int>("track_id");
         auto vx    = r->GetView<float>("x");
@@ -590,7 +628,7 @@ def read_track_states(hits_file, window_id):
             i += 1
         by_track[tid] = pts
 
-    print(f"[Tracks] ACTSTrackStates window {window_id}: {n} raw state(s), "
+    print(f"[Tracks] {states_ntuple} window {window_id}: {n} raw state(s), "
           f"{sum(len(v) for v in by_track.values())} display point(s) "
           f"across {len(by_track)} track(s).")
     return by_track
@@ -599,30 +637,64 @@ def read_track_states(hits_file, window_id):
 # ---------------------------------------------------------------------------
 # TRACK DRAWER (after TEveManager)
 # ---------------------------------------------------------------------------
-def draw_tracks(eve, track_data):
-    if not track_data:
-        return
-    colors = [ROOT.kRed, ROOT.kOrange+7, ROOT.kMagenta, ROOT.kYellow+1]
-    tracks_list = ROOT.TEveElementList("Reconstructed Tracks")
-    for iT, td in enumerate(track_data):
-        color  = colors[iT % len(colors)]
-        points = td['points']
-        label  = f"Track {iT}  chi2={td['chi2']:.1f}  ndf={td['ndf']}"
-        line   = ROOT.TEveStraightLineSet(label)
-        line.SetLineColor(color)
-        line.SetLineWidth(3)
-        line.SetMarkerColor(color)
-        line.SetMarkerSize(0.8)
-        line.SetMarkerStyle(4)
-        for j in range(len(points)-1):
-            x0, y0, z0, _ = points[j]
-            x1, y1, z1, _ = points[j+1]
-            line.AddLine(x0, y0, z0, x1, y1, z1)
-        for pt in points:
-            line.AddMarker(pt[0], pt[1], pt[2])
-        tracks_list.AddElement(line)
-    eve.GetEventScene().AddElement(tracks_list)
-    print(f"[Tracks] Added {len(track_data)} track(s).")
+# Global tracks cycle the warm palette; each local collection gets one cool
+# colour of its own, so "which detector is this stub in" is readable at a glance.
+GLOBAL_COLORS = ["kRed", "kOrange+7", "kMagenta", "kYellow+1"]
+LOCAL_COLORS  = {
+    "SiTargetTracks": "kAzure+1",
+    "SiPadTracks":    "kGreen+2",
+    "MTCTracks":      "kViolet+1",
+}
+
+
+def _color(spec):
+    """'kOrange+7' -> the ROOT colour index."""
+    if "+" in spec:
+        base, off = spec.split("+")
+        return getattr(ROOT, base) + int(off)
+    return getattr(ROOT, spec)
+
+
+def draw_tracks(eve, groups):
+    """Draw one TEve list per track collection.
+
+    `groups` is a list of (tracks_ntuple, label, kind, track_data). Globals are
+    solid and thick, locals dashed and thinner — a spliced track and a stub that
+    spliced with nothing must not look alike.
+    """
+    total = 0
+    for ntuple_name, label, kind, track_data in groups:
+        if not track_data:
+            continue
+        is_global = (kind == "global")
+        elist = ROOT.TEveElementList(f"{label} tracks")
+        for iT, td in enumerate(track_data):
+            if is_global:
+                color = _color(GLOBAL_COLORS[iT % len(GLOBAL_COLORS)])
+            else:
+                color = _color(LOCAL_COLORS.get(ntuple_name, "kGray+1"))
+            points = td['points']
+            name = (f"{label} {iT}  chi2/ndf="
+                    f"{td['chi2'] / max(1, td['ndf']):.2f}  ndf={td['ndf']}")
+            line = ROOT.TEveStraightLineSet(name)
+            line.SetLineColor(color)
+            line.SetLineWidth(3 if is_global else 2)
+            line.SetLineStyle(1 if is_global else 2)   # 2 = dashed
+            line.SetMarkerColor(color)
+            line.SetMarkerSize(0.8)
+            line.SetMarkerStyle(4 if is_global else 5)
+            for j in range(len(points) - 1):
+                x0, y0, z0, _ = points[j]
+                x1, y1, z1, _ = points[j + 1]
+                line.AddLine(x0, y0, z0, x1, y1, z1)
+            for pt in points:
+                line.AddMarker(pt[0], pt[1], pt[2])
+            elist.AddElement(line)
+        eve.GetEventScene().AddElement(elist)
+        total += len(track_data)
+        print(f"[Tracks] Added {len(track_data)} {label.lower()} track(s).")
+    if total == 0:
+        print("[Tracks] No tracks to draw.")
 
 
 # ---------------------------------------------------------------------------
@@ -659,7 +731,14 @@ def main():
         raise SystemExit(1)
     extract_z_from_geometry(args.geometry, config)
 
-    track_data = read_track_points(args.hits, args.window)
+    # Read every track collection the file happens to carry: ACTSTracks for the
+    # global tracker, GlobalTracks + the three local ones for the sequential.
+    track_groups = []
+    for tracks_nt, states_nt, label, kind in discover_track_ntuples(args.hits):
+        td = read_track_points(args.hits, args.window, tracks_nt, states_nt)
+        track_groups.append((tracks_nt, label, kind, td))
+    if not track_groups:
+        print("[Tracks] No track RNTuple found in the file.")
 
     ROOT.gErrorIgnoreLevel = ROOT.kWarning
     ROOT.gSystem.Load("libEve")
@@ -673,8 +752,7 @@ def main():
 
     build_geometry(eve, config)
     build_hits(eve, args.hits, args.window, config, color_by=args.color_by)
-    if track_data:
-        draw_tracks(eve, track_data)
+    draw_tracks(eve, track_groups)
 
     eve.Redraw3D(True)
     ROOT.gSystem.ProcessEvents()

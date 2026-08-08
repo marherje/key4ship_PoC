@@ -6,10 +6,21 @@
 
 class ISNDGeoSvc : virtual public IActsGeoSvc {
 public:
-  DeclareInterfaceID(ISNDGeoSvc, 1, 0);
+  DeclareInterfaceID(ISNDGeoSvc, 1, 1);
 
   // Returns all rectangle surfaces sorted by X, for all detectors combined.
   virtual const std::vector<const Acts::Surface*>& allSurfaces() const = 0;
+
+  // Returns the surfaces of ONE detector, sorted by X (beam) like allSurfaces().
+  // detID: 0=SiTarget, 1=SiPad, 2=MTC; anything else yields an empty vector.
+  //
+  // This is the authoritative per-detector partition: it is recorded while the
+  // TGeo tree is walked, where the detector identity is known from the volume
+  // name. Deriving it afterwards from the largest z-gaps in allSurfaces() is
+  // wrong in general — the MTC inter-station gaps can exceed the inter-detector
+  // ones — so any algorithm needing "just this detector's surfaces" must ask
+  // here rather than re-deriving it.
+  virtual const std::vector<const Acts::Surface*>& surfacesOf(int detID) const = 0;
 
   // Returns the ACTS geometry context (needed by algorithms in execute()).
   virtual const Acts::GeometryContext& geometryContext() const = 0;

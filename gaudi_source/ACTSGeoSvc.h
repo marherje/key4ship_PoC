@@ -7,6 +7,7 @@
 #include "Acts/MagneticField/MagneticFieldContext.hpp"
 #include "Acts/Geometry/DetectorElementBase.hpp"
 #include "Acts/Surfaces/Surface.hpp"
+#include <array>
 #include <map>
 #include <memory>
 #include <string>
@@ -26,6 +27,7 @@ public:
 
   // ISNDGeoSvc extensions
   const std::vector<const Acts::Surface*>& allSurfaces() const override;
+  const std::vector<const Acts::Surface*>& surfacesOf(int detID) const override;
   const Acts::GeometryContext& geometryContext() const override;
   const Acts::Surface* surfaceByAddress(
       int detID, int station, int layer, int plane) const override;
@@ -41,6 +43,10 @@ private:
 
   std::shared_ptr<const Acts::TrackingGeometry> m_trackingGeometry;
   std::vector<const Acts::Surface*>             m_allSurfaces;
+  // Per-detector views of m_allSurfaces, index = detID (0=SiTarget, 1=SiPad,
+  // 2=MTC). Filled from the TGeo walk, which is the only place the detector
+  // identity is known — see ISNDGeoSvc::surfacesOf.
+  std::array<std::vector<const Acts::Surface*>, 3> m_surfacesByDet;
   Acts::GeometryContext                         m_gctx;
   // Detector elements must outlive all surfaces (surfaces hold raw pointers back).
   std::vector<std::shared_ptr<Acts::DetectorElementBase>> m_detectorElements;

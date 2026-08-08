@@ -44,6 +44,7 @@ gaudi_add_module(SND_reco
     gaudi_source/EDM4HEP2RNTuple.cpp
     gaudi_source/ACTSGeoSvc.cpp
     gaudi_source/ACTSProtoTracker.cpp
+    gaudi_source/ACTSSequentialTracker.cpp
     gaudi_source/SiTargetMeasConverter.cpp
     gaudi_source/SiPadMeasConverter.cpp
     gaudi_source/MTCSciFiMeasConverter.cpp
