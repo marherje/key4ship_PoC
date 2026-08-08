@@ -27,9 +27,18 @@ pos_z=-1000
 # Particle pairs: "particle1:E1_GeV:particle2:E2_GeV"
 #   mu+ (PDG -13) 10 GeV  +  pi+ (PDG 211) 5 GeV
 #   e+  (PDG -11) 10 GeV  +  pi+ (PDG 211) 5 GeV
+#   mu- (PDG  13) 10 GeV  +  mu- (PDG  13) 10 GeV
+#
+# The two-muon pair feeds gaudi_jobs/2_mu_ang_pipeline. Note that the two
+# primaries share a vertex and are separated only by the opening angle: two
+# muons that are exactly PARALLEL are a degenerate configuration for the
+# SiTarget, whose 1D strips then see a ghost StripX x StripY pairing that is
+# itself a perfect straight line, indistinguishable from the real one by any
+# fit. Physical events always carry an angle; a test sample must too.
 pairs=(
     "mu+:10:pi+:5"
     "e+:10:pi+:5"
+    "mu-:10:mu-:10"
 )
 # ==============================================================
 
