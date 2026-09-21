@@ -154,7 +154,8 @@ public:
                                + contrib.getTime();
                 // ddsim leaves CaloHitContribution.PDG = 0; pull it from the linked MCParticle instead.
                 const auto mcp = contrib.getParticle();
-                cd.pdg       = mcp.isAvailable() ? mcp.getPDG() : 0;
+                cd.pdg         = mcp.isAvailable() ? mcp.getPDG() : 0;
+                cd.particle_id = mcp.isAvailable() ? mcp.getObjectID().index : -1;
                 cd.source_id = sourceID;
                 cd.stepX     = sp.x;
                 cd.stepY     = sp.y;
@@ -186,7 +187,8 @@ public:
                              + contrib.getTime();
               // ddsim leaves CaloHitContribution.PDG = 0; pull it from the linked MCParticle instead.
               const auto mcp = contrib.getParticle();
-              cd.pdg       = mcp.isAvailable() ? mcp.getPDG() : 0;
+              cd.pdg         = mcp.isAvailable() ? mcp.getPDG() : 0;
+              cd.particle_id = mcp.isAvailable() ? mcp.getObjectID().index : -1;
               cd.source_id = sourceID;
               cd.stepX     = sp.x;
               cd.stepY     = sp.y;
@@ -213,11 +215,13 @@ public:
           -> std::tuple<edm4hep::SimCalorimeterHitCollection,
                         edm4hep::CaloHitContributionCollection,
                         std::vector<int>,
+                        std::vector<int>,
                         std::vector<int>> {
         edm4hep::SimCalorimeterHitCollection   hits;
         edm4hep::CaloHitContributionCollection contribs;
         std::vector<int> sourceIDs;
-        std::vector<int> pdgs;  // per-contribution real Geant4 PDG codes
+        std::vector<int> pdgs;         // per-contribution real Geant4 PDG codes
+        std::vector<int> particleIDs;  // per-contribution MCParticle indices
         for (const auto& [cellID, vec] : buf) {
           auto outHit = hits.create();
           outHit.setCellID(cellID);
@@ -242,17 +246,18 @@ public:
             contrib.setStepPosition({cd.stepX, cd.stepY, cd.stepZ});
             outHit.addToContributions(contrib);
             pdgs.push_back(cd.pdg);  // parallel PDG vector (per contribution)
+            particleIDs.push_back(cd.particle_id);
             totalE += cd.energy;
           }
           outHit.setEnergy(totalE);
         }
-        return {std::move(hits), std::move(contribs), std::move(sourceIDs), std::move(pdgs)};
+        return {std::move(hits), std::move(contribs), std::move(sourceIDs), std::move(pdgs), std::move(particleIDs)};
       };
 
-      auto [outSiTarget,  outSiTargetContribs,  sourceIDsSiTarget,  pdgsSiTarget]  = buildColl(m_bufferSiTarget);
-      auto [outSiPad,    outSiPadContribs,    sourceIDsSiPad,    pdgsSiPad]    = buildColl(m_bufferSiPad);
-      auto [outMTCSciFi, outMTCSciFiContribs, sourceIDsMTCSciFi, pdgsMTCSciFi] = buildColl(m_bufferMTCSciFi);
-      auto [outMTCScint, outMTCScintContribs, sourceIDsMTCScint, pdgsMTCScint] = buildColl(m_bufferMTCScint);
+      auto [outSiTarget,  outSiTargetContribs,  sourceIDsSiTarget,  pdgsSiTarget,  partsSiTarget]  = buildColl(m_bufferSiTarget);
+      auto [outSiPad,    outSiPadContribs,    sourceIDsSiPad,    pdgsSiPad,    partsSiPad]    = buildColl(m_bufferSiPad);
+      auto [outMTCSciFi, outMTCSciFiContribs, sourceIDsMTCSciFi, pdgsMTCSciFi, partsMTCSciFi] = buildColl(m_bufferMTCSciFi);
+      auto [outMTCScint, outMTCScintContribs, sourceIDsMTCScint, pdgsMTCScint, partsMTCScint] = buildColl(m_bufferMTCScint);
 
       podio::ROOTWriter writer(m_outputFile.value());
       {
@@ -274,6 +279,11 @@ public:
         outFrame.putParameter("SiPadContribPDGs",    pdgsSiPad);
         outFrame.putParameter("MTCSciFiContribPDGs", pdgsMTCSciFi);
         outFrame.putParameter("MTCScintContribPDGs", pdgsMTCScint);
+        // Per-contribution MCParticle indices (same layout as the PDGs above)
+        outFrame.putParameter("SiTargetContribParticleIDs", partsSiTarget);
+        outFrame.putParameter("SiPadContribParticleIDs",    partsSiPad);
+        outFrame.putParameter("MTCSciFiContribParticleIDs", partsMTCSciFi);
+        outFrame.putParameter("MTCScintContribParticleIDs", partsMTCScint);
         writer.writeFrame(outFrame, "events");
       }
       writer.finish();
@@ -300,6 +310,10 @@ private:
     float time;        // absolute time in ns
     int   source_id;
     int   pdg;         // real Geant4 PDG code from the input ddsim file
+    // MCParticle index within its source file. Identifies the particle, not
+    // the species, so two same-species particles of one shower stay distinct.
+    // Unique only together with source_id, since each source counts from 0.
+    int   particle_id;
     float stepX, stepY, stepZ;
     float hitX, hitY, hitZ;
   };

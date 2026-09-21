@@ -56,9 +56,45 @@
     <!-- Directly derived parameters -->
     <!-- Total z available to SiTarget + SiPad. A zero-sum budget: every mm the
          SiPad takes is one the SiTarget loses. Was 1700 mm. -->
+    <!-- Longitudinal budget for the two silicon detectors together. It is a
+         BUDGET, not an envelope: the SiTarget envelope below hugs its layers,
+         and whatever is left of these 2200 mm stays free upstream, available
+         for thicker absorbers, wider layer gaps or a larger detector
+         separation. -->
     <constant name="SiDetector_total_dim_z"  value="2200*mm"/>
-    <constant name="SiTarget_dim_z"          value="SiDetector_total_dim_z-SiPad_dim_z"/>
-    <constant name="SiTarget_z_position"     value="-SiTarget_dim_z/2.0-SiPad_dim_z"/>
+
+    <!-- Layer count is a HARD CEILING, matching the geometry the GENIE MC was
+         generated on: the generator sampled interaction vertices over a
+         120-layer SiTarget, and its vertex distribution stops dead at
+         z = -1690 mm (2 vertices beyond it against 485 inside). Propagating
+         that MC through a detector of any other depth is inconsistent.
+         Written as a literal: parse_geometry.py evaluates constants with a
+         bare eval() exposing no builtins, so min() is not available, and
+         DD4hep's evaluator would have to accept it too. If SiTarget_spacing
+         ever grows, the envelope grows with it (upstream, the free side); the
+         count stays 120 until changed here by hand. -->
+    <constant name="SiTarget_NLayers_max"    value="120"/>
+
+    <!-- The envelope is exactly its layers, so the detector cannot drift
+         inside a larger box: with a 1830 mm envelope the 120 layers were
+         CENTRED in it and sat at z = -1940..-630, displaced 250 mm from the
+         -1690..-370 the MC assumes. -->
+    <constant name="SiTarget_dim_z"          value="SiTarget_NLayers_max*SiTarget_spacing"/>
+
+    <!-- Separation between the downstream face of the SiTarget and the
+         upstream face of the SiPad. 0 keeps them flush, which is what the MC
+         geometry has and what the previous hardcoded formula did implicitly.
+         Exposed as an input so the spacing can be studied without editing a
+         position expression.
+
+         The default is 2*env_safety, not 0: each envelope is inflated by
+         env_safety, so placing them at literally zero separation makes ROOT
+         report a 0.002 mm overlap between SiPad_envelope and
+         SiTarget_envelope. Two microns is the smallest separation that is
+         geometrically clean, and is negligible against the 11 mm layer
+         pitch. -->
+    <constant name="SiTarget_SiPad_gap"      value="2*env_safety"/>
+    <constant name="SiTarget_z_position"     value="-SiTarget_dim_z/2.0-SiPad_dim_z-SiTarget_SiPad_gap"/>
 
     <!-- ECAL geometry constants (from SiPad_commondefs.xml) -->
     <constant name="SiPad_z_position"         value="-SiPad_dim_z/2.0"/>
@@ -132,7 +168,11 @@
     <constant name="SiPad_PcbThickness"       value="1.7*mm"/>
     <constant name="SiPad_ChipThickness"      value="1.2*mm"/>
     <constant name="SiPad_LayerThickness"      value="SiPad_WThickness+SiPad_frame_gap+SiPad_layer_gap+SiPad_CFThickness+SiPad_KaptonThickness+SiPad_GlueThickness_kap+SiPad_WaferThickness650+SiPad_GlueThickness_pcb+SiPad_KaptonThickness+SiPad_PcbThickness+SiPad_ChipThickness"/>
-    <constant name="SiPad_NLayers"            value="floor(SiPad_dim_z/SiPad_LayerThickness)"/>
+    <!-- Same ceiling logic as SiTarget; 22 is what the committed envelope and
+         pitch give today, so this only guards against a future thinner layer
+         silently multiplying the plane count. -->
+    <constant name="SiPad_NLayers_max"        value="22"/>
+    <constant name="SiPad_NLayers"            value="SiPad_NLayers_max"/>
 
     <!-- SiTarget constants (from FairShip SiliconTarget_config.yaml) -->
     <constant name="SiTarget_strip_pitch"    value="0.0755*mm"/>
@@ -167,7 +207,20 @@
     <constant name="SiTarget_sensor_gap"      value="1.0*mm"/>    <!-- gap between sensors -->
     <constant name="SiTarget_ncols"           value="4"/>
     <constant name="SiTarget_nrows"           value="2"/>
-    <constant name="SiTarget_NLayers"       value="floor(SiTarget_dim_z/SiTarget_LayerThickness)"/>
+    <!-- HARD CEILING on the layer count, 120, independent of how much room the
+         envelope has. The envelope is deliberately larger than 120 layers
+         need: the spare depth (SiTarget+SiPad share 2200 mm) is budget for
+         absorber thickness, inter-layer gaps and the separation between the
+         two detectors, not for more sampling planes. Without the ceiling
+         floor(1830/11) yields 166, which is what the geometry was building
+         while the committed GDML and the MOBO baseline both used 120.
+         Written as a literal rather than min(NLayers_max, floor(..)):
+         parse_geometry.py evaluates constants with a bare eval() that exposes
+         no builtins, and DD4hep's own evaluator would have to accept min() as
+         well. If the pitch ever grows past SiTarget_dim_z/120 = 15.25 mm the
+         layers would no longer fit and this constant must be revisited by
+         hand: there is no expression guarding it. -->
+    <constant name="SiTarget_NLayers"       value="SiTarget_NLayers_max"/>
 
     <!-- MTC shared layer constants (hardcoded values from MTCDetector.h unless noted) -->
     <constant name="MTC_FeThickness"         value="50.0*mm"/>  <!-- outer iron absorber, PoC default -->

@@ -74,6 +74,20 @@ def configure(SIM, cfg):
     SIM.inputConfig.userInputPlugin = []
     SIM.inputFiles = [hepmc_file]
 
+    # Per-event chatter off unless asked for. At INFO ddsim writes ~1 KB per
+    # event (GenerationInit, the HepMC reader, hepmc4, PrimaryHandler,
+    # ParticleHandler, Geant4Output2EDM4hep -- seven lines each), which is
+    # 10 MB per 10k-event trial and, over a 200-trial campaign, more disk than
+    # the results. WARNING (4) keeps the geometry summary and every problem.
+    # `verbose: true` in the steering dict restores the default.
+    if not cfg.get("verbose", False):
+        SIM.printLevel = 5
+        SIM.output.inputStage = 4
+        SIM.output.kernel = 4
+        SIM.output.part = 4
+        SIM.output.random = 4
+        SIM.output.geometry = 4
+
     print("[genie_base] reading primaries from %s (numberOfEvents=%d, skip=%d)"
           % (hepmc_file, SIM.numberOfEvents, SIM.skipNEvents))
     return SIM

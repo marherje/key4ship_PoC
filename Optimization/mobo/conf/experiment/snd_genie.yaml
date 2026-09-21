@@ -1,0 +1,114 @@
+# GENIE experiment: tracking reach and SiPad sampling against cost.
+#
+# Same search space as snd_proxy -- the point is to change WHAT is scored, not
+# where we look -- but both objectives are now physics measured on GENIE
+# neutrino interactions replayed through each variant:
+#
+#   eff_track     fraction of events with at least one GlobalTrack
+#   nhits_sipad   total SiPad hits
+#
+# The third objective is what keeps the problem honest. eff_track and
+# nhits_sipad are not obviously in tension -- more SiPad layers give both more
+# hits and more chances to reconstruct something -- so on their own the front
+# could collapse to a single corner of the box and the multi-objective
+# machinery would buy nothing over a scalar scan. cost_proxy opposes both:
+# every extra layer, every extra millimetre of tungsten and every extra square
+# metre of silicon is paid for. The interesting answer is the shape of that
+# 3-D surface: how much reconstruction reach a given budget buys, and where
+# the knee is.
+#
+# cost_proxy is a PROXY, and its coefficients (evaluator.cost_model) are
+# order-of-magnitude figures. The trade-off the optimizer finds follows
+# directly from the silicon/tungsten price ratio, so treat the front as a
+# ranking under a stated price model, not as a costed design.
+name: snd_genie
+
+parameters:
+  # LAYER COUNTS. The ceilings are hard and come from the geometry the GENIE MC
+  # was generated on: 120 SiTarget layers and 22 SiPad ones. A variant above
+  # them would be a detector the sampled interaction vertices never saw.
+  SiTarget_NLayers:    { low: 20,   high: 120, kind: int }  # baseline 120
+  SiPad_NLayers:       { low: 4,    high: 22,  kind: int }  # baseline 22
+  #
+  # KNOWN BIAS OF THE LOWER HALF OF THESE RANGES, stated because it changes how
+  # the front should be read, not because it invalidates it.
+  #
+  # The GENIE vertices were sampled over the 120-layer geometry. A shorter
+  # SiTarget is placed flush against the SiPad, so its upstream face moves
+  # downstream and the vertices beyond it end up in air rather than tungsten.
+  # Geant4 still propagates their final states, so the variant is credited with
+  # interactions that, physically, would not have happened in it:
+  #
+  #     layers   depth    upstream face   vertices left outside
+  #       120    1320 mm     -1690 mm        0  ( 0.0% of 2000)
+  #       100    1100 mm     -1470 mm       79  ( 4.0%)
+  #        80     880 mm     -1250 mm      157  ( 7.8%)
+  #        60     660 mm     -1030 mm      240  (12.0%)
+  #        40     440 mm      -810 mm      321  (16.1%)
+  #        20     220 mm      -590 mm      388  (19.4%)
+  #
+  # The bias favours SHORT detectors, and it grows with how short they are, so
+  # a Pareto point at 20 layers is up to ~19% optimistic against one at 120.
+  # Accepted deliberately: the alternative is re-generating the MC per variant,
+  # which defeats the point of a shared HepMC. Read the low-layer end of the
+  # front as an upper bound on what that geometry would really do.
+
+  # ABSORBER THICKNESSES.
+  SiTarget_WThickness: { low: 2.0,  high: 8.0 }             # mm, baseline 3.5
+  SiPad_WThickness:    { low: 5.0,  high: 30.0 }            # mm, baseline 10
+
+  # LAYER SPACING. Air beyond the rigid content of a layer. These are lengths
+  # now, not `auto`: the detector's depth follows from its layers rather than
+  # the layers being stretched to fill a depth fixed in advance, which is what
+  # makes the spacing a thing an optimizer can actually trade against.
+  SiTarget_layer_slack: { low: 1.0, high: 15.0 }            # mm, baseline 4.9
+  SiPad_layer_gap:      { low: 0.5, high: 10.0 }            # mm, baseline 1.0
+
+  # Where the Y plane sits inside the SiTarget layer's air, as a fraction of it.
+  # A fraction and not a length so the whole [0, 1] interval stays feasible
+  # whatever the slack is.
+  SiTarget_XY_plane_gap_frac: { low: 0.0, high: 1.0 }       # baseline 1
+
+  # Separation between the two silicon detectors.
+  SiTarget_SiPad_gap:  { low: 0.002, high: 200.0 }          # mm, baseline 0.002
+
+# There is no longer a fixed envelope for either detector: dim_z = NLayers x
+# LayerThickness. What constrains the box is the LONGITUDINAL BUDGET,
+# SiDetector_total_dim_z = 2200 mm, checked on the resolved geometry by
+# config.py; a variant whose SiTarget + SiPad + separation exceeds it is
+# rejected by the dry-run gate before anything is queued. The baseline uses
+# 1684.1 mm, so there are 515.9 mm of headroom to spend.
+fixed:
+  SiPad_frame_gap: 0.1
+  SiTarget_module_offset: 1
+  # Unused SiPad envelope beyond its layers. 5.9 mm is what the committed
+  # baseline has (370 mm box, 22 layers of 16.55 mm = 364.1), and the layers
+  # sit centred in it, so reproducing the number is what keeps trial 0
+  # identical to the geometry the GENIE MC was generated on. Fixed rather than
+  # searched: it is dead space, not a design knob.
+  SiPad_env_slack: 5.9
+
+objectives:
+  - { name: eff_track,   direction: max, ref_from_baseline: 0.5 }
+  - { name: nhits_sipad, direction: max, ref_from_baseline: 0.5 }
+  # min: ref_from_baseline is the worst still worth having, so 2.0 = "twice the
+  # baseline budget and no more".
+  - { name: cost_proxy,  direction: min, ref_from_baseline: 2.0 }
+
+loop:
+  # A GENIE trial is heavier than a mu_pi one: 200 neutrino interactions
+  # through the full chain, and the sequential tracker is the expensive step.
+  # 60, not 20. The initial design is 2*(d+1) Sobol points and d is now 8, so
+  # 1 baseline + 18 Sobol = 19 trials are spent before the GP ever proposes
+  # anything. At max_trials=20 that left exactly ONE qLogNEHVI trial and the
+  # campaign was a Sobol scan with a rounding error attached. 100 gives ~81 BO trials, four times the
+  # initial design, and ~2 h of wall clock at 4 in flight. Raising the search space
+  # dimension without raising this is the mistake to avoid: with d=6 the same
+  # budget left 5 BO trials, with d=8 it leaves 1.
+  max_trials: 100
+  max_in_flight: 4
+  batch_ask: 1
+  poll_interval: 60
+  max_retries: 1
+  baseline_first: true       # trial 0 is the baseline geometry
+  time_budget_hours: null

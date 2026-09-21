@@ -94,7 +94,9 @@ class TrialStatus(str, Enum):
 
     INFEASIBLE is reserved for a geometry rejected *before* any CPU is spent on
     it (the dry-run gate); FAILED is a trial that ran and did not produce
-    metrics. Both are excluded from the GP, but only FAILED is worth retrying.
+    metrics. FAILED is excluded from the GP and is the only one worth
+    retrying; INFEASIBLE enters the GP pinned to the reference point so the
+    acquisition learns the boundary (OptimizerConfig.penalize_infeasible).
     """
 
     PROPOSED = "PROPOSED"

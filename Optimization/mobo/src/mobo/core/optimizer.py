@@ -22,6 +22,7 @@ the acquisition raises, the optimizer logs it and falls back to Sobol.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -35,6 +36,13 @@ from .search_space import SearchSpace
 from .types import ObjectiveSpec, Trial, TrialStatus, derive_seed
 
 log = logging.getLogger(__name__)
+
+# The driver runs on a shared login node. Left to itself torch spreads the
+# acquisition optimization over every core it sees, and 2026-09-18 that was 20
+# CPU-hours in an evening; one thread keeps it to one core, at nice 19, which
+# is the only footprint acceptable on lxplus (CLAUDE.md). MOBO_TORCH_THREADS
+# raises it on a machine that is actually ours.
+torch.set_num_threads(max(1, int(os.environ.get("MOBO_TORCH_THREADS", "1"))))
 
 
 @dataclass
@@ -56,6 +64,21 @@ class OptimizerConfig:
     # evaluator reports them (`<metric>_stderr`). Off for the proxy phase: a hit
     # count has no meaningful stderr from a single run.
     fixed_noise: bool = False
+    # An INFEASIBLE proposal (the geometry does not build: over the
+    # longitudinal budget, say) enters the GP as an observation AT THE
+    # REFERENCE POINT -- the worst value still worth having on every
+    # objective, i.e. zero hypervolume gain -- so the acquisition learns to
+    # stay away. Without this the point was merely counted and the model,
+    # which only ever saw the good side of the boundary, proposed the same
+    # corner again: 146 rejections in one evening (snd_genie_gen_10k,
+    # 2026-09-18). Run failures (crashes) are NOT modelled this way: they are
+    # not a property of the geometry.
+    penalize_infeasible: bool = True
+    # Circuit breaker: after this many infeasible proposals in a row the next
+    # one is Sobol, whatever the model says. Each rejected ask still costs a
+    # full acquisition optimization, and the penalty above needs a refit to
+    # take effect.
+    max_consecutive_infeasible: int = 3
 
     @classmethod
     def from_config(cls, cfg: Any) -> OptimizerConfig:
@@ -87,9 +110,11 @@ class MOBOptimizer:
         self._x: list[list[float]] = []
         self._y: list[list[float]] = []
         self._yvar: list[list[float]] = []
+        self._x_infeasible: list[list[float]] = []
         self._n_proposed = 0
         self._n_sobol = 0
         self._n_failed = 0
+        self._consecutive_infeasible = 0
         self._model: Any = None
         self._model_stale = True
 
@@ -140,6 +165,7 @@ class MOBOptimizer:
                     for obj in self.objectives
                 ]
             )
+        self._consecutive_infeasible = 0
         self._model_stale = True
         return True
 
@@ -147,6 +173,23 @@ class MOBOptimizer:
         """A trial that ran and produced nothing. Counted, not modelled."""
         del unit_x
         self._n_failed += 1
+
+    def observe_infeasible(self, unit_x: Sequence[float]) -> None:
+        """A proposal the evaluator refused to build. Modelled as worthless.
+
+        See OptimizerConfig.penalize_infeasible. The point is kept aside and
+        materialized at fit time, because the reference point it is pinned to
+        may not exist yet (it is anchored by the baseline trial).
+        """
+        self._n_failed += 1
+        self._consecutive_infeasible += 1
+        if self.cfg.penalize_infeasible:
+            self._x_infeasible.append(list(map(float, unit_x)))
+            self._model_stale = True
+
+    @property
+    def n_infeasible(self) -> int:
+        return len(self._x_infeasible)
 
     def rehydrate(self, trials: Sequence[Trial]) -> None:
         """Rebuild the optimizer's state from the store (resume).
@@ -157,22 +200,27 @@ class MOBOptimizer:
         self._x.clear()
         self._y.clear()
         self._yvar.clear()
+        self._x_infeasible.clear()
         self._n_proposed = 0
         self._n_sobol = 0
         self._n_failed = 0
+        self._consecutive_infeasible = 0
         for t in trials:
             self._n_proposed += 1
             if t.tag == "sobol":
                 self._n_sobol += 1
             if t.status is TrialStatus.COMPLETED and t.metrics:
                 self.observe(t.unit_x, t.metrics)
+            elif t.status is TrialStatus.INFEASIBLE:
+                self.observe_infeasible(t.unit_x)
             elif t.status.is_terminal:
                 self.observe_failure(t.unit_x)
         self._model_stale = True
         log.info(
-            "rehydrated: %d trials, %d observations, %d sobol drawn",
+            "rehydrated: %d trials, %d observations, %d infeasible, %d sobol drawn",
             self._n_proposed,
             self.n_observations,
+            self.n_infeasible,
             self._n_sobol,
         )
 
@@ -205,6 +253,10 @@ class MOBOptimizer:
         else:
             log.debug("Sobol phase: %s", reason)
 
+        if self._consecutive_infeasible >= self.cfg.max_consecutive_infeasible:
+            # The breaker tripped: this Sobol point is the reset. If it is
+            # infeasible too the count starts again from one.
+            self._consecutive_infeasible = 0
         return self._record(self._ask_sobol(n))
 
     def _why_sobol(self) -> str | None:
@@ -216,6 +268,12 @@ class MOBOptimizer:
         if ref_point_tensor(self.objectives) is None:
             missing = [o.name for o in self.objectives if o.ref_point is None]
             return "no reference point for " + ", ".join(missing)
+        if self._consecutive_infeasible >= self.cfg.max_consecutive_infeasible:
+            log.warning(
+                "%d infeasible proposals in a row; one Sobol point to break out",
+                self._consecutive_infeasible,
+            )
+            return f"{self._consecutive_infeasible} consecutive infeasible proposals"
         return None
 
     def _ask_sobol(self, n: int) -> list[Proposal]:
@@ -258,15 +316,39 @@ class MOBOptimizer:
     def _y_tensor(self) -> torch.Tensor:
         return torch.tensor(self._y, dtype=DTYPE)
 
+    def _training_set(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        """Observations plus, when it can be placed, one row per infeasible point.
+
+        The infeasible rows sit exactly on the (signed) reference point. Their
+        noise, when the model has per-point noise at all, is the median of the
+        real observations': a hard zero would make the GP bend sharply to pass
+        through them, and they are a statement about the region, not a
+        measurement.
+        """
+        x = self._x_tensor()
+        y = self._y_tensor()
+        yvar = (
+            torch.tensor(self._yvar, dtype=DTYPE)
+            if self.cfg.fixed_noise and len(self._yvar) == len(self._x)
+            else None
+        )
+        ref = ref_point_tensor(self.objectives)
+        if self._x_infeasible and ref is not None:
+            k = len(self._x_infeasible)
+            x = torch.cat([x, torch.tensor(self._x_infeasible, dtype=DTYPE)])
+            y = torch.cat([y, ref.expand(k, -1)])
+            if yvar is not None:
+                fill = (
+                    yvar.median(dim=0).values if len(yvar) else torch.full_like(ref, 1e-9)
+                )
+                yvar = torch.cat([yvar, fill.expand(k, -1)])
+        return x, y, yvar
+
     def _fit(self) -> Any:
         if self._model is None or self._model_stale:
             torch.manual_seed(derive_seed(self.cfg.seed, self._n_proposed))
-            yvar = (
-                torch.tensor(self._yvar, dtype=DTYPE)
-                if self.cfg.fixed_noise and len(self._yvar) == len(self._x)
-                else None
-            )
-            self._model = build_model(self._x_tensor(), self._y_tensor(), yvar)
+            x, y, yvar = self._training_set()
+            self._model = build_model(x, y, yvar)
             self._model_stale = False
         return self._model
 

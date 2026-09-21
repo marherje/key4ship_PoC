@@ -408,6 +408,48 @@ the git SHA and the torch/botorch versions.
 
 ---
 
+## GENIE generated per variant (`snd_genie_gen`)
+
+```bash
+mobo-run experiment=snd_genie_gen evaluator=snd_genie_gen executor=htcondor_genie
+```
+
+The `snd_genie` experiment replays one shared HepMC file of GENIE final
+states through every variant, which credits a short or thin detector with
+interactions its material would not have produced (up to ~19 % at the low end
+of the SiTarget range). `snd_genie_gen` removes that: the payload runs GENIE
+on each variant's own geometry before ddsim, entirely inside the trial's job,
+
+```
+geometry.xml ─geoConverter─▶ geometry.gdml ─shift_gdml_frame.py─▶ geometry_fairship.gdml
+             ─run_gevgen.sh (SHiP cvmfs, GENIE 3.4.2)─▶ genie/gntp.<id>.gst.root
+             ─genie_gst_to_hepmc.py─▶ genie.hepmc ─ddsim─▶ job1 → job4_seq → job5_seq
+```
+
+The GDML goes to GENIE in the FairShip frame (+2576 cm) because the flux
+file is in that frame and `gevgen_fnal` cannot translate it; the converter
+moves the vertices back (`simulation/run_script/README_genie.md` has the
+full story). GENIE needs the SHiP software stack, which cannot share a shell
+with key4hep, so `run_gevgen.sh` is launched with `env -i` from the payload.
+
+Two extra metrics per trial: `genie_pot`, the exposure GENIE needed to
+produce `nevents` interactions in this geometry, and `n_int_per_1e18pot`,
+the resulting interaction rate — the one number a shared file cannot give,
+and a candidate objective once cost is on the table. `nevents` in
+`metrics.json` is the number actually simulated (GENIE air interactions
+outside DD4hep's ±20 m world are dropped by the converter).
+
+Cost: ~10 min of `gevgen_fnal` per trial before anything else happens (the
+470 MB cross-section spline file is parsed at start-up), and 6 GB of memory,
+which is what `executor=htcondor_genie` requests. Measured at 10k
+interactions per trial (2026-09-18, 9 trials): GENIE 12 min, ddsim 56 min,
+job4 24–49 min growing with the layer count, 87–123 min wall in all.
+
+Disk: a trial deletes each Gaudi job's input as soon as the job is done
+with it and every remaining ROOT file once `metrics.json` exists, so it peaks
+at ~1.5 GB (10k events) and ends at ~6 MB. `evaluator.keep_intermediate=true`
+switches both off for a run whose files you want to look at.
+
 ## HTCondor
 
 ```bash

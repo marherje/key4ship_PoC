@@ -6,7 +6,7 @@
 
 class ISNDGeoSvc : virtual public IActsGeoSvc {
 public:
-  DeclareInterfaceID(ISNDGeoSvc, 1, 1);
+  DeclareInterfaceID(ISNDGeoSvc, 1, 2);
 
   // Returns all rectangle surfaces sorted by X, for all detectors combined.
   virtual const std::vector<const Acts::Surface*>& allSurfaces() const = 0;
@@ -32,6 +32,22 @@ public:
   // plane:   0/1 for strips, -1 for pixels
   virtual const Acts::Surface* surfaceByAddress(
       int detID, int station, int layer, int plane) const = 0;
+
+  // Returns the ordinal of the layer this surface belongs to, counted within
+  // its own detector along the beam (0 = most upstream), or -1 if unknown.
+  //
+  // Not the same as the raw `layer` of surfaceByAddress(): that one restarts at
+  // 0 in every MTC station, so it cannot answer "how many layers lie between
+  // these two surfaces". The ordinal is contiguous across a whole detector, so
+  // subtracting two of them is a layer count. All surfaces of one physical
+  // layer share an ordinal — the MTC's U (plane=0), V (plane=1) and combined
+  // (plane=3) surfaces map to a single layer, which is what makes a hit count
+  // per layer independent of whether the U/V pair was merged.
+  virtual int layerOrdinalOf(const Acts::Surface* surface) const = 0;
+
+  // Number of distinct layers in a detector, i.e. one past the largest ordinal
+  // layerOrdinalOf() can return for it. 0 for an unknown detID.
+  virtual int nLayersOf(int detID) const = 0;
 
   virtual ~ISNDGeoSvc() {}
 };

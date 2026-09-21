@@ -1,0 +1,42 @@
+# How one SND variant is evaluated on GENIE neutrino interactions.
+#
+# The difference from `snd` is the chain, not the machinery: ddsim replays a
+# fixed HepMC file of GENIE final states through the variant geometry, and the
+# analysis runs the SEQUENTIAL tracker (per-subdetector search + splicing),
+# which is the one tuned for GENIE topologies. Everything else -- executor,
+# store, acquisition -- is unchanged.
+nevents: 200
+output_level: INFO
+python: python3
+
+# The GENIE chain. Paths are relative to the repo root.
+run_sim: Optimization/Simulation/run_scripts/run_sim_genie.py
+sim_file: output_genie.edm4hep.root
+hits_file: ShipHits_seq.root
+jobs:
+  - job1_overlay        # identical for both chains: same collection names
+  - job4_tracking_seq   # ACTSSequentialTracker, not ACTSProtoTracker
+  - job5_rntuple_seq    # writes GlobalTracks + the three local RNTuples
+# job5_rntuple_seq.py writes the track RNTuples, so eff_track is available.
+track_metrics: true
+
+# Recorded on every trial even though this experiment does not optimize it:
+# adding cost_proxy as a third objective later must not mean re-simulating.
+cost_model:
+  si_per_m2: 30.0
+  w_per_kg: 0.1
+  rho_w_g_cm3: 19.3
+
+geometry_dir: null
+analysis_dir: null
+parse_geometry: null
+# Trials go under <run_dir>/trials unless this points elsewhere (e.g. EOS).
+trials_dir: null
+
+# Intermediate ROOT files. false (default): each Gaudi job's input is deleted
+# the moment the job is done with it (the ddsim output after job1, the overlay
+# after job4) and whatever is left goes once metrics.json is written -- a
+# 10k-event trial then never holds more than ~1.5 GB and ends at ~6 MB. true:
+# keep every file of every trial, e.g. to open one variant in the event
+# display:  mobo-run ... evaluator.keep_intermediate=true
+keep_intermediate: false

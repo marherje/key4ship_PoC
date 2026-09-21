@@ -150,7 +150,8 @@ public:
                 // ddsim leaves CaloHitContribution.PDG = 0; pull it from the
                 // linked MCParticle instead.
                 const auto mcp = contrib.getParticle();
-                cd.pdg       = mcp.isAvailable() ? mcp.getPDG() : 0;
+                cd.pdg         = mcp.isAvailable() ? mcp.getPDG() : 0;
+                cd.particle_id = mcp.isAvailable() ? mcp.getObjectID().index : -1;
                 cd.source_id = sourceID;
                 cd.stepX = sp.x; cd.stepY = sp.y; cd.stepZ = sp.z;
                 cd.hitX  = hp.x; cd.hitY  = hp.y; cd.hitZ  = hp.z;
@@ -176,7 +177,8 @@ public:
               cd.energy = contrib.getEnergy();
               cd.time   = contrib.getTime();
               const auto mcp = contrib.getParticle();
-              cd.pdg       = mcp.isAvailable() ? mcp.getPDG() : 0;
+              cd.pdg         = mcp.isAvailable() ? mcp.getPDG() : 0;
+              cd.particle_id = mcp.isAvailable() ? mcp.getObjectID().index : -1;
               cd.source_id = sourceID;
               cd.stepX = sp.x; cd.stepY = sp.y; cd.stepZ = sp.z;
               cd.hitX  = hp.x; cd.hitY  = hp.y; cd.hitZ  = hp.z;
@@ -193,11 +195,13 @@ public:
             -> std::tuple<edm4hep::SimCalorimeterHitCollection,
                           edm4hep::CaloHitContributionCollection,
                           std::vector<int>,
+                          std::vector<int>,
                           std::vector<int>> {
           edm4hep::SimCalorimeterHitCollection   hits;
           edm4hep::CaloHitContributionCollection contribs;
           std::vector<int> sourceIDs;
           std::vector<int> pdgs;
+          std::vector<int> particleIDs;
           for (const auto& [cellID, vec] : buf) {
             auto outHit = hits.create();
             outHit.setCellID(cellID);
@@ -219,23 +223,25 @@ public:
               contrib.setStepPosition({cd.stepX, cd.stepY, cd.stepZ});
               outHit.addToContributions(contrib);
               pdgs.push_back(cd.pdg);
+              particleIDs.push_back(cd.particle_id);
               totalE += cd.energy;
               ++totalContribs;
             }
             outHit.setEnergy(totalE);
           }
           return {std::move(hits), std::move(contribs),
-                  std::move(sourceIDs), std::move(pdgs)};
+                  std::move(sourceIDs), std::move(pdgs),
+                  std::move(particleIDs)};
         };
 
-        auto [outSiTarget, outSiTargetContribs, srcSiTarget, pdgSiTarget] =
-            buildColl(bufSiTarget);
-        auto [outSiPad, outSiPadContribs, srcSiPad, pdgSiPad] =
-            buildColl(bufSiPad);
-        auto [outMTCSciFi, outMTCSciFiContribs, srcMTCSciFi, pdgMTCSciFi] =
-            buildColl(bufMTCSciFi);
-        auto [outMTCScint, outMTCScintContribs, srcMTCScint, pdgMTCScint] =
-            buildColl(bufMTCScint);
+        auto [outSiTarget, outSiTargetContribs, srcSiTarget, pdgSiTarget,
+              partSiTarget] = buildColl(bufSiTarget);
+        auto [outSiPad, outSiPadContribs, srcSiPad, pdgSiPad,
+              partSiPad] = buildColl(bufSiPad);
+        auto [outMTCSciFi, outMTCSciFiContribs, srcMTCSciFi, pdgMTCSciFi,
+              partMTCSciFi] = buildColl(bufMTCSciFi);
+        auto [outMTCScint, outMTCScintContribs, srcMTCScint, pdgMTCScint,
+              partMTCScint] = buildColl(bufMTCScint);
 
         podio::Frame outFrame;
         outFrame.put(std::move(outSiTarget),         m_outTargetName.value());
@@ -255,6 +261,13 @@ public:
         outFrame.putParameter("SiPadContribPDGs",    pdgSiPad);
         outFrame.putParameter("MTCSciFiContribPDGs", pdgMTCSciFi);
         outFrame.putParameter("MTCScintContribPDGs", pdgMTCScint);
+        // Same layout as the ContribPDGs vectors above (one entry per
+        // contribution, in the same order), but identifying the PARTICLE
+        // rather than its species — see ContribData::particle_id.
+        outFrame.putParameter("SiTargetContribParticleIDs", partSiTarget);
+        outFrame.putParameter("SiPadContribParticleIDs",    partSiPad);
+        outFrame.putParameter("MTCSciFiContribParticleIDs", partMTCSciFi);
+        outFrame.putParameter("MTCScintContribParticleIDs", partMTCScint);
         outFrame.putParameter("t_window_start", 0.0f);
 
         writer.writeFrame(outFrame, "events");
@@ -282,6 +295,12 @@ private:
     float time;        // raw simulation time in ns
     int   source_id;
     int   pdg;         // real Geant4 PDG code from the input ddsim file
+    // Index of the MCParticle this contribution came from, within its own
+    // source file's MCParticle collection. Unlike pdg it identifies the
+    // PARTICLE, so two same-species particles of one shower stay distinct —
+    // which is what a track-purity study needs and what pdg cannot give.
+    // Unique only together with source_id, since each source counts from 0.
+    int   particle_id;
     float stepX, stepY, stepZ;
     float hitX, hitY, hitZ;
   };

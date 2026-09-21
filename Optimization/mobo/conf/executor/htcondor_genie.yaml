@@ -1,0 +1,29 @@
+# htcondor, sized for a trial that runs gevgen_fnal before ddsim: the
+# cross-section spline XML (470 MB) is parsed into memory at start-up, which
+# does not fit the default 2 GB slot; and the flux and splines are read from
+# EOS, which the forwarded kerberos credential covers. "tomorrow" (24 h)
+# because the queue for a 6 GB slot can be slow and the trial itself is ~20-30
+# min at 100 interactions.
+kind: htcondor
+
+flavour: tomorrow
+universe: vanilla
+request_cpus: 1
+request_memory: 6GB
+request_disk: 8GB
+should_transfer_files: "YES"
+send_credential: true
+
+poll_interval: 60
+watchdog_interval: 120
+grace_seconds: 600
+timeout_hours: 24
+submit_retries: 3
+run_local: false
+extra_submit: {}
+init_script: null
+
+# job.sh / job.sub / condor.{log,out,err} go here, one dir per trial. Null =
+# <run_dir>/jobs (AFS): CERN's standard schedds refuse /eos paths in a submit
+# file, so this must not follow the trials to EOS.
+submit_dir: null

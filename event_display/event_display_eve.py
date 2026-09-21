@@ -27,7 +27,7 @@ _color_refs = []
 ROOT.gROOT.ProcessLine("""
 namespace SNDEve {
     std::vector<float> gX, gY, gZ, gE;
-    std::vector<int>   gSrc, gPlane, gOrig;
+    std::vector<int>   gSrc, gPlane, gOrig, gCol, gRow;
     std::vector<float> gTsX, gTsY, gTsZ, gTsLoc0, gTsTilt;
     std::vector<int>   gTsTrackId;
 }
@@ -125,7 +125,7 @@ def read_hits(hits_file, ntuple_name, window_id, filter_dict=None, energy_field=
     {{
         SNDEve::gX.clear(); SNDEve::gY.clear(); SNDEve::gZ.clear();
         SNDEve::gE.clear(); SNDEve::gSrc.clear(); SNDEve::gPlane.clear();
-        SNDEve::gOrig.clear();
+        SNDEve::gOrig.clear(); SNDEve::gCol.clear(); SNDEve::gRow.clear();
         try {{
             auto reader = ROOT::RNTupleReader::Open("{ntuple_name}", "{hits_file}");
             auto vwin = reader->GetView<int>("window_id");
@@ -139,6 +139,9 @@ def read_hits(hits_file, ntuple_name, window_id, filter_dict=None, energy_field=
                     != ROOT::kInvalidDescriptorId;
             const bool hasPlane =
                 reader->GetDescriptor().FindFieldId("plane")
+                    != ROOT::kInvalidDescriptorId;
+            const bool hasColRow =
+                reader->GetDescriptor().FindFieldId("column")
                     != ROOT::kInvalidDescriptorId;
             {filter_decls}
             for (auto i : reader->GetEntryRange()) {{
@@ -160,6 +163,16 @@ def read_hits(hits_file, ntuple_name, window_id, filter_dict=None, energy_field=
             }} else {{
                 for (std::size_t k = 0; k < SNDEve::gX.size(); ++k)
                     SNDEve::gPlane.push_back(-1);
+            }}
+            if (hasColRow) {{
+                auto vcol = reader->GetView<int>("column");
+                auto vrow = reader->GetView<int>("row");
+                for (auto i : reader->GetEntryRange()) {{
+                    if ((int)vwin(i) != {window_id}) continue;
+                    {filter_checks}
+                    SNDEve::gCol.push_back(vcol(i));
+                    SNDEve::gRow.push_back(vrow(i));
+                }}
             }}
             if (hasOrig) {{
                 auto vorig = reader->GetView<int>("origin_pdg");
@@ -190,7 +203,69 @@ def read_hits(hits_file, ntuple_name, window_id, filter_dict=None, energy_field=
     origins = [ROOT.SNDEve.gOrig[i] for i in range(ROOT.SNDEve.gOrig.size())]
     if len(origins) != n:
         origins = [0] * n
-    return xs, ys, zs, Es, srcs, planes, origins
+    cols = [ROOT.SNDEve.gCol[i] for i in range(ROOT.SNDEve.gCol.size())]
+    rows = [ROOT.SNDEve.gRow[i] for i in range(ROOT.SNDEve.gRow.size())]
+    if len(cols) != n:
+        cols = [-1] * n; rows = [-1] * n
+    return xs, ys, zs, Es, srcs, planes, origins, cols, rows
+
+
+# ---------------------------------------------------------------------------
+# MC ORIGIN FOR MEASUREMENT NTUPLES (join against the raw-hit ntuple)
+# ---------------------------------------------------------------------------
+def join_origins(hits_file, window_id, xs, ys, zs, planes, cols, rows, spec):
+    """The measurement RNTuples (SiTargetMeas, SiPadMeas) carry no origin_pdg;
+    the raw-hit ones (SiTarget, SiPad) do, and a measurement is one hit, so the
+    two can be joined on (z, sensor, measured coordinate). `spec` comes from
+    detector_config.json: {"ntuple": "SiTarget", "meas_keys": [...],
+    "hit_keys": [...]} where the keys name the fields to match, in order, and
+    "x"/"y"/"z" refer to the coordinates, anything else to integer fields."""
+    hit_nt   = spec["ntuple"]
+    hit_keys = spec["hit_keys"]
+    int_keys = [k for k in hit_keys if k not in ("x", "y", "z")]
+    decls  = "".join(f'auto vk_{k} = reader->GetView<int>("{k}"); ' for k in int_keys)
+    pushes = "".join(f'SNDEve::gKey_{k}.push_back(vk_{k}(i)); ' for k in int_keys)
+    for k in int_keys:
+        if not hasattr(ROOT.SNDEve, f"gKey_{k}"):
+            ROOT.gROOT.ProcessLine(f"namespace SNDEve {{ std::vector<int> gKey_{k}; }}")
+    ROOT.gROOT.ProcessLine(f"""
+    {{
+        SNDEve::gX.clear(); SNDEve::gY.clear(); SNDEve::gZ.clear(); SNDEve::gOrig.clear();
+        {"".join(f"SNDEve::gKey_{k}.clear(); " for k in int_keys)}
+        try {{
+            auto reader = ROOT::RNTupleReader::Open("{hit_nt}", "{hits_file}");
+            auto vwin = reader->GetView<int>("window_id");
+            auto vx = reader->GetView<float>("x");
+            auto vy = reader->GetView<float>("y");
+            auto vz = reader->GetView<float>("z");
+            auto vo = reader->GetView<int>("origin_pdg");
+            {decls}
+            for (auto i : reader->GetEntryRange()) {{
+                if ((int)vwin(i) != {window_id}) continue;
+                SNDEve::gX.push_back(vx(i)); SNDEve::gY.push_back(vy(i));
+                SNDEve::gZ.push_back(vz(i)); SNDEve::gOrig.push_back(vo(i));
+                {pushes}
+            }}
+        }} catch (...) {{
+            printf("[reader] origin join: RNTuple '{hit_nt}' not readable.\\n");
+        }}
+    }}
+    """)
+    n = ROOT.SNDEve.gX.size()
+    coord = {"x": ROOT.SNDEve.gX, "y": ROOT.SNDEve.gY, "z": ROOT.SNDEve.gZ}
+    table = {}
+    for i in range(n):
+        key = tuple(round(coord[k][i], 2) if k in coord
+                    else int(getattr(ROOT.SNDEve, f"gKey_{k}")[i]) for k in hit_keys)
+        table[key] = ROOT.SNDEve.gOrig[i]
+    mcoord = {"x": xs, "y": ys, "z": zs, "plane": planes, "column": cols, "row": rows}
+    out = []
+    for i in range(len(xs)):
+        key = tuple(round(mcoord[k][i], 2) if k in ("x", "y", "z")
+                    else int(mcoord[k][i]) for k in spec["meas_keys"])
+        out.append(table.get(key, 0))
+    print(f"[Hits]   origin join with {hit_nt}: {sum(1 for o in out if o)}/{len(out)} matched")
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -248,9 +323,13 @@ def build_hits(eve, hits_file, window_id, config, color_by="detector"):
         if len(layers_z) == 0: continue
         stereo_deg = det.get("stereo_deg", 0.0)
 
-        xs, ys, zs, Es, srcs, planes, origins = read_hits(
+        xs, ys, zs, Es, srcs, planes, origins, cols, rows = read_hits(
             hits_file, ntuple, window_id, filter_dict=filter_d,
             energy_field=det.get("energy_field", "edep"))
+        # Measurement ntuples carry no MC origin; borrow it from the hit ntuple.
+        if color_by == "mc" and xs and not any(origins) and det.get("origin_from"):
+            origins = join_origins(hits_file, window_id, xs, ys, zs, planes,
+                                   cols, rows, det["origin_from"])
 
         if not xs:
             print(f"[Hits] {det_name}: no hits")
@@ -584,7 +663,6 @@ def read_track_states(hits_file, window_id, states_ntuple="ACTSTrackStates"):
     """)
     n     = ROOT.SNDEve.gTsX.size()
     mm2cm = 0.1
-    TAN5  = math.tan(5.0 * math.pi / 180.0)
 
     # Collect raw state data per track (in state_idx order, already beam-direction)
     raw = {}
@@ -598,9 +676,13 @@ def read_track_states(hits_file, window_id, states_ntuple="ACTSTrackStates"):
             float(ROOT.SNDEve.gTsTilt[i]),   # stereo tilt: +sin5° U, -sin5° V, 0 non-stereo
         ))
 
-    # Apply stereo pairing: for MTC SciFi U/V pairs in the same layer,
-    # x = (loc0_U + loc0_V)/2,  y = (loc0_V - loc0_U)/(2*tan5°)
-    # This avoids using loc1 (unreliable for 1D strip measurements through iron).
+    # Apply stereo pairing: an MTC SciFi U/V pair in the same layer becomes one
+    # point, the average of the two states' (x, y). The tracker already writes
+    # every state's x, y through the surface transform (ACTSSequentialTracker,
+    # PHASE 4), so this is the same first-order cancellation of the +-sin(5deg)
+    # loc1 leak that the tracker applies itself; the old recomputation from
+    # raw loc0 assumed loc0 = +x, which is the mirror image of the real frame
+    # (loc0 = -x) and drew every stereo state reflected in x.
     by_track = {}
     for tid, states in raw.items():
         pts = []
@@ -612,10 +694,9 @@ def read_track_states(hits_file, window_id, states_ntuple="ACTSTrackStates"):
                 if i + 1 < len(states):
                     _, _, z2, loc02, tilt2 = states[i + 1]
                     if abs(z - z2) < 0.5 and tilt * tilt2 < 0:  # same layer, opp. tilt
-                        loc0_U = loc0  if tilt  > 0 else loc02   # positive tilt → V plane
-                        loc0_V = loc02 if tilt  > 0 else loc0    # negative tilt → U plane
-                        gx = (loc0_U + loc0_V) / 2.0 * mm2cm
-                        gy = (loc0_V - loc0_U) / (2.0 * TAN5) * mm2cm
+                        x2, y2 = states[i + 1][0], states[i + 1][1]
+                        gx = 0.5 * (x + x2)
+                        gy = 0.5 * (y + y2)
                         gz = (z + z2) / 2.0
                         pts.append((gx, gy, gz))
                         i += 2

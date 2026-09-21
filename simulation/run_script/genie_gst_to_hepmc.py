@@ -8,10 +8,14 @@ GENIE's ``gevgen_fnal`` (as used for the SND neutrino samples, see
 flat "gst" ROOT TTree (one row per neutrino interaction) via GENIE's
 ``gntpc -f gst`` summary converter. Each row already carries:
 
-  * the interaction vertex (``vtxx``/``vtxy``/``vtxz``, cm) in the SAME
-    reference frame as our own DD4hep geometry -- no FairShip<->key4ship
-    offset needs to be re-applied here, that conversion only concerned the
-    neutrino *flux* geometry GENIE was run against, not this output frame;
+  * the interaction vertex (``vtxx``/``vtxy``/``vtxz``, GENIE's native
+    METERS -- NOT ROOT/TGeo's cm, see the conversion note below) in the
+    reference frame of the GDML GENIE was run against. For the 2026_07_30
+    EOS production that is the key4ship frame as-is (``--z-shift-m 0``).
+    For samples made by ``launch_genie_gen.sh`` the GDML is shifted to the
+    FairShip frame so the flux rays land where they should (see
+    ``simulation/geometry/gdml/shift_gdml_frame.py``), and the vertices
+    have to be brought back with ``--z-shift-m -25.76``;
   * the outgoing primary lepton (``fspl``, ``pxl``/``pyl``/``pzl``/``El``);
   * the post-FSI hadronic/nuclear final state (``nf`` particles,
     ``pdgf``/``pxf``/``pyf``/``pzf``/``Ef``).
@@ -34,14 +38,41 @@ Usage:
 """
 
 import argparse
+import math
 import sys
 
 import pyhepmc
 
 
+def on_shell(pdg, px, py, pz, E, pdg_db):
+    """(px, py, pz, E) with E recomputed from the PDG mass.
+
+    GENIE writes some final-state nucleons OFF-SHELL: a bound nucleon keeps
+    its removal energy, so a neutron can come out with m = 935.6 MeV instead
+    of 939.6. Geant4 derives the mass from (E, p) and, for one with p ~ 0,
+    ends up with a neutron of zero kinetic energy and the wrong mass, tries
+    to decay it, finds no channel and aborts the run (G4Exception DECAY003,
+    fatal -- seen on trial t00000 of the first snd_genie_gen test). With p > 0
+    the same mismatch is only a warning (part0005), which is why the shared
+    2000-event sample never tripped it. Direction and |p| are kept; only E
+    moves, by a few MeV. Nuclei and anything TDatabasePDG does not know keep
+    GENIE's energy.
+    """
+    # PyROOT hands back a null proxy (falsy, and a ReferenceError on use)
+    # rather than None for a code the database does not know, e.g. nuclei.
+    part = pdg_db.GetParticle(int(pdg))
+    if not part:
+        return px, py, pz, E
+    m = part.Mass()
+    return px, py, pz, math.sqrt(px * px + py * py + pz * pz + m * m)
+
+
 def convert(input_path, tree_name, start, nevents, output_path,
-            cc_only=False, flavour=None, min_final_state_energy=0.0):
+            cc_only=False, flavour=None, min_final_state_energy=0.0,
+            z_shift_m=0.0, world_half_size_m=20.0):
     import ROOT
+
+    pdg_db = ROOT.TDatabasePDG.Instance()
 
     f = ROOT.TFile.Open(input_path)
     if not f or f.IsZombie():
@@ -57,6 +88,7 @@ def convert(input_path, tree_name, start, nevents, output_path,
 
     written = 0
     skipped = 0
+    outside = 0
     with pyhepmc.open(output_path, "w") as writer:
         for i in range(start, stop):
             t.GetEntry(i)
@@ -66,16 +98,40 @@ def convert(input_path, tree_name, start, nevents, output_path,
             if flavour is not None and t.neu != flavour:
                 continue
 
+            # GENIE also interacts in the air of the GDML world, which is
+            # bigger than the DD4hep one once shifted (+-40 m vs +-20 m). A
+            # primary vertex outside Geant4's world is a segfault in ddsim
+            # (seen at z = -20.2 m), so those are dropped here and counted.
+            vz = t.vtxz + z_shift_m
+            if max(abs(t.vtxx), abs(t.vtxy), abs(vz)) >= world_half_size_m:
+                outside += 1
+                continue
+
             evt = pyhepmc.GenEvent(
                 momentum_unit=pyhepmc.Units.MomentumUnit.GEV,
                 length_unit=pyhepmc.Units.LengthUnit.MM,
             )
             evt.event_number = written
 
-            # cm -> mm; GENIE vertex time (vtxt, s) is not used downstream
-            # (the SND pipelines are event-by-event, no absolute timing), so
-            # it is dropped rather than converted.
-            vtx = pyhepmc.GenVertex((t.vtxx * 10.0, t.vtxy * 10.0, t.vtxz * 10.0, 0.0))
+            # m -> mm. GENIE's GeomAnalyzerI reports the interaction vertex
+            # in GENIE's own natural length unit (meter -- see
+            # genie::units::meter), NOT in ROOT/TGeo's native cm, even
+            # though the geometry it navigated (SND_compact_key4ship.gdml)
+            # is a GDML/TGeo file. Confirmed against the raw gst tree: vtxz
+            # spans [-20, +20] and vtxx/vtxy span roughly [-10, +16] /
+            # [-8, +8], which matches the DD4hep world volume's
+            # world_side = 20*m (SND_compact.xml) -- i.e. these are metres,
+            # not centimetres. Using *10.0 here (cm -> mm) previously
+            # shrank every vertex by a further 10x on top of that, squeezing
+            # the whole ~20 m detector into a ~20 cm cube around the origin
+            # (a ddsim-external unit bug -- not filtered/cut logic).
+            # GENIE vertex time (vtxt, s) is not used downstream (the SND
+            # pipelines are event-by-event, no absolute timing), so it is
+            # dropped rather than converted.
+            # z_shift_m undoes the frame the GDML was exported in (0 for a
+            # key4ship-frame GDML, -25.76 for the FairShip-frame one).
+            vtx = pyhepmc.GenVertex((t.vtxx * 1000.0, t.vtxy * 1000.0,
+                                     vz * 1000.0, 0.0))
 
             # Incoming neutrino: status 4 ("beam"), no outgoing edge from
             # this vertex on its own -> Geant4's HepMC primary generator
@@ -86,7 +142,8 @@ def convert(input_path, tree_name, start, nevents, output_path,
             n_final = 0
             # Outgoing primary lepton.
             if t.El > min_final_state_energy:
-                lep = pyhepmc.GenParticle((t.pxl, t.pyl, t.pzl, t.El), int(t.fspl), 1)
+                lep = pyhepmc.GenParticle(
+                    on_shell(t.fspl, t.pxl, t.pyl, t.pzl, t.El, pdg_db), int(t.fspl), 1)
                 vtx.add_particle_out(lep)
                 n_final += 1
 
@@ -96,7 +153,9 @@ def convert(input_path, tree_name, start, nevents, output_path,
             for k in range(t.nf):
                 if Ef[k] <= min_final_state_energy:
                     continue
-                p = pyhepmc.GenParticle((pxf[k], pyf[k], pzf[k], Ef[k]), int(pdgf[k]), 1)
+                p = pyhepmc.GenParticle(
+                    on_shell(pdgf[k], pxf[k], pyf[k], pzf[k], Ef[k], pdg_db),
+                    int(pdgf[k]), 1)
                 vtx.add_particle_out(p)
                 n_final += 1
 
@@ -112,8 +171,10 @@ def convert(input_path, tree_name, start, nevents, output_path,
             written += 1
 
     print("[genie_gst_to_hepmc] read entries [%d, %d) of %d, wrote %d events "
-          "(%d skipped: no trackable final state) -> %s"
-          % (start, stop, total, written, skipped, output_path))
+          "(%d skipped: no trackable final state; %d dropped: vertex outside "
+          "the +-%g m world) -> %s"
+          % (start, stop, total, written, skipped, outside, world_half_size_m,
+             output_path))
     return written
 
 
@@ -134,11 +195,21 @@ def main():
     p.add_argument("--min-final-state-energy", type=float, default=0.0,
                     help="drop final-state particles at or below this energy [GeV] "
                          "(default: 0, keep everything GENIE reports)")
+    p.add_argument("--z-shift-m", type=float, default=0.0,
+                    help="add this to every vertex z [m] before writing: 0 for a "
+                         "gst made against the key4ship-frame GDML, -25.76 for one "
+                         "made against SND_compact_fairship_frame.gdml (default: 0)")
+    p.add_argument("--world-half-size-m", type=float, default=20.0,
+                    help="drop events whose (shifted) vertex lies outside this "
+                         "half-size cube: the DD4hep world, world_side in "
+                         "SND_compact.xml (default: 20)")
     args = p.parse_args()
 
     n = convert(args.input, args.tree, args.start, args.nevents, args.output,
                 cc_only=args.cc_only, flavour=args.flavour,
-                min_final_state_energy=args.min_final_state_energy)
+                min_final_state_energy=args.min_final_state_energy,
+                z_shift_m=args.z_shift_m,
+                world_half_size_m=args.world_half_size_m)
     if n == 0:
         print("ERROR: no events written", file=sys.stderr)
         sys.exit(1)

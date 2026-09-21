@@ -540,12 +540,25 @@ StatusCode ACTSGeoSvc::initialize() {
   // positions is exactly the largest-gap heuristic that surfacesOf() exists to
   // replace.
   if (allPlanes.size() == m_allSurfaces.size()) {
+    // (detID, station, layerInDet) -> layer ordinal within the detector. The
+    // loop runs in beam order, so a key's first appearance IS its position
+    // along the beam and the ordinals come out sorted without a second pass.
+    // The MTC's U/V/combined surfaces share a key (the combined plane copies
+    // station and layerInDet from its U partner above), so one physical layer
+    // gets one ordinal.
+    std::map<std::tuple<int, int, int>, int> layerOrdinals;
     for (std::size_t i = 0; i < allPlanes.size(); ++i) {
       const auto& pi = allPlanes[i];
       m_surfaceByAddressMap[{pi.detID, pi.station, pi.layerInDet, pi.plane}]
           = m_allSurfaces[i];
-      if (pi.detID >= 0 && pi.detID < 3)
+      if (pi.detID >= 0 && pi.detID < 3) {
         m_surfacesByDet[pi.detID].push_back(m_allSurfaces[i]);
+        auto [it, inserted] = layerOrdinals.try_emplace(
+            std::make_tuple(pi.detID, pi.station, pi.layerInDet),
+            m_nLayersByDet[pi.detID]);
+        if (inserted) ++m_nLayersByDet[pi.detID];
+        m_layerOrdinalBySurface[m_allSurfaces[i]] = it->second;
+      }
     }
   } else {
     warning() << "[ACTSGeoSvc] allPlanes.size()=" << allPlanes.size()
@@ -559,6 +572,9 @@ StatusCode ACTSGeoSvc::initialize() {
          << " (SiTarget=" << m_surfacesByDet[0].size()
          << " SiPad="     << m_surfacesByDet[1].size()
          << " MTC="       << m_surfacesByDet[2].size() << ")" << endmsg;
+  info() << "[ACTSGeoSvc] Layers per detector: SiTarget="
+         << m_nLayersByDet[0] << " SiPad=" << m_nLayersByDet[1]
+         << " MTC=" << m_nLayersByDet[2] << endmsg;
 
   return StatusCode::SUCCESS;
 }
@@ -593,6 +609,16 @@ const Acts::Surface* ACTSGeoSvc::surfaceByAddress(
     int detID, int station, int layer, int plane) const {
   auto it = m_surfaceByAddressMap.find({detID, station, layer, plane});
   return (it != m_surfaceByAddressMap.end()) ? it->second : nullptr;
+}
+
+int ACTSGeoSvc::layerOrdinalOf(const Acts::Surface* surface) const {
+  auto it = m_layerOrdinalBySurface.find(surface);
+  return (it != m_layerOrdinalBySurface.end()) ? it->second : -1;
+}
+
+int ACTSGeoSvc::nLayersOf(int detID) const {
+  if (detID < 0 || detID >= static_cast<int>(m_nLayersByDet.size())) return 0;
+  return m_nLayersByDet[detID];
 }
 
 const Acts::GeometryContext& ACTSGeoSvc::geometryContext() const {

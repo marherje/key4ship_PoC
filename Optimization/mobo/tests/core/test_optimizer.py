@@ -231,3 +231,44 @@ def test_pareto_mask_agrees_with_botorch(objectives):
     torch.manual_seed(3)
     y = torch.rand(30, 2, dtype=torch.double)
     assert torch.equal(pareto_mask(y), is_non_dominated(y))
+
+
+@pytest.mark.slow
+def test_infeasible_proposals_are_learned_not_repeated(space2d, objectives, braninc):
+    """Half the cube is infeasible; the optimizer must stop proposing it.
+
+    Regression for snd_genie_gen_10k (2026-09-18): with infeasible points
+    merely counted, qLogNEHVI proposed the same over-budget corner 146 times
+    in a row. Pinned to the reference point they teach the GP the boundary.
+    """
+
+    def campaign(penalize: bool) -> tuple[int, int]:
+        evaluate = braninc(seed=3)
+        opt = MOBOptimizer(
+            space2d,
+            objectives,
+            OptimizerConfig(
+                n_init=6,
+                seed=3,
+                penalize_infeasible=penalize,
+                # the naive case is the pre-fix behaviour: no breaker either
+                max_consecutive_infeasible=3 if penalize else 10**6,
+                **FAST,
+            ),
+        )
+        longest = run = 0
+        for _ in range(40):
+            (p,) = opt.ask(1)
+            if p.unit_x[0] > 0.5:  # "over the longitudinal budget"
+                opt.observe_infeasible(p.unit_x)
+                run += 1
+                longest = max(longest, run)
+            else:
+                opt.observe(p.unit_x, evaluate(p.unit_x))
+                run = 0
+        return longest, opt.n_observations
+
+    longest_naive, n_naive = campaign(penalize=False)
+    longest, n_obs = campaign(penalize=True)
+    assert n_obs > 2 * n_naive, (n_obs, n_naive)
+    assert longest <= 8 < longest_naive, (longest, longest_naive)

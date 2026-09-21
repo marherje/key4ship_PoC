@@ -112,7 +112,11 @@ def test_infeasible_trials_cost_nothing_and_are_recorded(
     for t in infeasible:
         assert t.error and "feasible region" in t.error
         assert not (synthetic_evaluator.workdir(t) / "trial.json").exists()
-    assert len(store.all()) == 8
+    # An infeasible proposal is not charged to max_trials: the budget buys 8
+    # geometries that were actually simulated, however many the gate refused
+    # on the way (a campaign that lost 146 of 200 ids to rejections is why).
+    assert len(store.all()) - len(infeasible) == 8
+    assert len(store.by_status(TrialStatus.COMPLETED)) == 8
 
 
 def test_failed_payloads_are_retried_then_recorded(

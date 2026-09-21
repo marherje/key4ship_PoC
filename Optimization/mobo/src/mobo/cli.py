@@ -110,6 +110,10 @@ def build(cfg: DictConfig, run_dir: Path) -> tuple[AsyncLoop, TrialStore]:
     evaluator = SNDEvaluator(ev_cfg)
 
     executor = make_executor(cfg.executor)
+    # Condor's submit files stay next to the store, on AFS, whatever
+    # evaluator.trials_dir says: the standard schedds refuse /eos paths there.
+    if getattr(getattr(executor, "cfg", None), "submit_dir", "n/a") is None:
+        executor.cfg.submit_dir = str(Path(run_dir).resolve() / "jobs")
 
     loop_cfg = LoopConfig.from_config(experiment.loop)
     loop_cfg.ref_point_from_baseline = ref_point_rule(experiment.objectives)

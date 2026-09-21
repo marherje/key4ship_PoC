@@ -21,3 +21,13 @@ geometry_dir: null
 analysis_dir: null
 run_sim: null
 parse_geometry: null
+# Trials go under <run_dir>/trials unless this points elsewhere (e.g. EOS).
+trials_dir: null
+
+# Intermediate ROOT files. false (default): each Gaudi job's input is deleted
+# the moment the job is done with it (the ddsim output after job1, the overlay
+# after job4) and whatever is left goes once metrics.json is written -- a
+# 10k-event trial then never holds more than ~1.5 GB and ends at ~6 MB. true:
+# keep every file of every trial, e.g. to open one variant in the event
+# display:  mobo-run ... evaluator.keep_intermediate=true
+keep_intermediate: false
