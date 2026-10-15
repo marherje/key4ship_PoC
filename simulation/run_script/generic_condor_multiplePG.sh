@@ -36,7 +36,7 @@ scriptname=$1
 label=$2
 
 # Crear directorios si no existen
-mkdir -p steer data log
+mkdir -p steer log
 
 local=$PWD
 steer_path="${local}/steer"

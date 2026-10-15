@@ -8,6 +8,8 @@
 #
 #   k4run job5_rntuple_seq.py      # tracks_seq.edm4hep.root -> ShipHits_seq.root
 
+import os
+
 from k4FWCore import ApplicationMgr, IOSvc
 from Configurables import EDM4HEP2RNTuple
 import sys
@@ -18,11 +20,17 @@ from parse_geometry import SNDGeometry
 geo = SNDGeometry()
 
 iosvc = IOSvc()
-iosvc.Input = ["tracks_seq.edm4hep.root"]
+iosvc.Input = [os.environ.get("INPUT_FILE",
+    "/eos/experiment/ship/user/marquezh/snd_pfa/genie/tracks_pfa_ref_a.root")]
 
 converter = EDM4HEP2RNTuple("EDM4HEP2RNTuple")
-converter.InputFile      = "tracks_seq.edm4hep.root"
-converter.OutputFile     = "ShipHits.root"
+# EDM4HEP2RNTuple opens the files itself (it bypasses IOSvc), so these have to
+# follow INPUT_FILE too or the RNTuple silently describes a different sample
+# than the one IOSvc was given.
+converter.InputFile      = iosvc.Input[0]
+converter.OutputFile     = os.environ.get(
+    "HITS_FILE",
+    "/eos/experiment/ship/user/marquezh/snd_pfa/genie/ShipHits_pfa_ref_a.root")
 converter.NTupleNames    = ["SiTarget", "SiPad", "MTCSciFi", "MTCScint"]
 converter.Collections    = [
     "SiTargetHitsWindowed",
@@ -41,7 +49,7 @@ converter.SourceIDParams = ["SiTargetSourceIDs", "SiPadSourceIDs",
 converter.ContribPDGParams = ["SiTargetContribPDGs", "SiPadContribPDGs",
                               "MTCSciFiContribPDGs", "MTCScintContribPDGs"]
 converter.DetectorIDs    = [0, 1, 3, 3]
-converter.TrackFile      = "tracks_seq.edm4hep.root"
+converter.TrackFile      = iosvc.Input[0]
 # GlobalTracks first so it is the one a reader defaulting to "the first track
 # collection" picks up.
 converter.TrackCollections = [

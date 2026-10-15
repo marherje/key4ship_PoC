@@ -12,7 +12,15 @@ import os
 
 infile = os.environ.get(
     "INPUT_FILE",
-    "../../simulation/run_script/data/output_genie_allflavours.edm4hep.root")
+    # SND-PFA reference run, generated 2026-09-22 with the current geometry
+    # and the corrected flux frame. It replaces
+    # output_genie_allflavours_0_2000.edm4hep.root, which must NOT be used any
+    # more: simulated in August against the 166-layer SiTarget compact, its
+    # hits reach layer 165 where today's geometry stops at 119, so 13 % of its
+    # SiTarget hits address volumes that no longer exist and the VolumeManager
+    # cannot place them. Its neutrino cone is also centred at z ~ 0 instead of
+    # 25.76 m upstream. See docs/snd_pfa_progress.md.
+    "../../simulation/run_script/data/output_genie_pfa_ref_a.edm4hep.root")
 
 overlay.InputFiles = [infile]
 overlay.SourceIDs           = [1]
@@ -20,7 +28,10 @@ overlay.CollectionsSiTarget = ['SiTargetHits']
 overlay.CollectionsSiPad    = ['SiPadHits']
 overlay.CollectionsMTC      = ['MTCDetHits']
 overlay.MaxEventsPerSource  = 0     # all events
-overlay.OutputFile          = "events.edm4hep.root"
+# Outputs live on EOS (docs/snd_pfa_plan.md section B); OUTPUT_FILE overrides.
+overlay.OutputFile          = os.environ.get(
+    "OUTPUT_FILE",
+    "/eos/experiment/ship/user/marquezh/snd_pfa/genie/events_pfa_ref_a.root")
 
 ApplicationMgr(
     EvtSel  = "NONE",

@@ -356,7 +356,14 @@ def generate(spec, workdir, env):
 CONSUMED_BY = {
     "job1": ("{sim_file}",),
     "job4": ("events.edm4hep.root",),
+    # The PFA steps run after job5, which has already read the tracks.
+    "job6": ("tracks_seq.edm4hep.root",),
+    "job7": ("pfa_seq.edm4hep.root",),
 }
+
+# Appended to the chain when the evaluator asks for pfa_metrics.
+PFA_JOBS = ("job6_pfa", "job7_pfa_rntuple")
+PFA_FILE = "ShipPFA.root"
 
 
 def drop_consumed(step, workdir, spec):
@@ -377,7 +384,8 @@ def drop_consumed(step, workdir, spec):
 
 
 def analyse(spec, workdir, env, sim_file):
-    """job1 -> job4 -> job5, exactly as the controller chains them.
+    """job1 -> job4 -> job5, exactly as the controller chains them, then the
+    SND-PFA (job6 -> job7) when the evaluator asks for pfa_metrics.
 
     The jobs use bare filenames, so the working directory has to be the trial's.
     Each job's input is deleted as soon as the job has finished with it (see
@@ -391,7 +399,10 @@ def analyse(spec, workdir, env, sim_file):
     env["SND_OUTPUT_LEVEL"] = spec.get("output_level", "INFO")
 
     analysis_dir = Path(spec["analysis_dir"])
-    for job in spec.get("jobs") or ("job1_overlay", "job4_tracking", "job5_rntuple"):
+    jobs = list(spec.get("jobs") or ("job1_overlay", "job4_tracking", "job5_rntuple"))
+    if spec.get("pfa_metrics"):
+        jobs += [j for j in PFA_JOBS if j not in jobs]
+    for job in jobs:
         short = job.split("_")[0]
         run_step(
             short,
@@ -445,6 +456,18 @@ def measure(spec, workdir, nevents=None):
                 log=tail(workdir / "job5.log"),
             )
         metrics.update(tracks)
+
+    # PFA metrics, opt-in like the track ones. A chain that was asked for them
+    # and produced none broke somewhere, and must not be scored as a geometry.
+    if spec.get("pfa_metrics"):
+        pfa = metrics_mod.pfa_metrics(str(workdir / PFA_FILE))
+        if "eff_muon_id" not in pfa:
+            raise StepFailed(
+                "metrics",
+                "could not read the EventPFA RNTuple from %s" % PFA_FILE,
+                log=tail(workdir / "job7.log"),
+            )
+        metrics.update(pfa)
     return metrics
 
 

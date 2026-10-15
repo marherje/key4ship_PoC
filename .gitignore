@@ -20,7 +20,7 @@ build
 install
 
 # Simulation files
-simulation/run_script/data/
+simulation/run_script/data
 simulation/run_script/steer/
 simulation/run_script/macros/
 simulation/run_script/log/

@@ -11,6 +11,8 @@
 # — the difference starts at the tracker. See gaudi_jobs/e_pi_pipeline's
 # job4_tracking_seq.py for the pattern this mirrors.
 
+import os
+
 from k4FWCore import ApplicationMgr, IOSvc
 from Configurables import ACTSGeoSvc, SiTargetMeasConverter, \
                           SiPadMeasConverter, MTCSciFiMeasConverter, \
@@ -65,8 +67,13 @@ for _z_ctr, _yhalf, _zhalf in _station_params:
 # ──────────────────────────────────────────────────────────────────────────────
 
 iosvc = IOSvc()
-iosvc.Input          = "events.edm4hep.root"
-iosvc.Output         = "tracks_seq.edm4hep.root"
+# Reference sample and outputs live on EOS (docs/snd_pfa_plan.md section B).
+iosvc.Input          = os.environ.get(
+    "INPUT_FILE",
+    "/eos/experiment/ship/user/marquezh/snd_pfa/genie/events_pfa_ref_a.root")
+iosvc.Output         = os.environ.get(
+    "OUTPUT_FILE",
+    "/eos/experiment/ship/user/marquezh/snd_pfa/genie/tracks_pfa_ref_a.root")
 # keep * forwards all input collections (including MTCSciFiHitsWindowed and
 # MTCScintHitsWindowed) to the output so job5 can write them to the RNTuple.
 iosvc.outputCommands = ["keep *"]
