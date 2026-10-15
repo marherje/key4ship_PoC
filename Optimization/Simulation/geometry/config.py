@@ -51,11 +51,14 @@ REF_RE = re.compile(r'(ref=")([^"/][^"]*)(")')
 # that NLayers layers span dim_z exactly, i.e. the layers come out equidistant.
 # {parameter: (thickness constant, envelope constant, layer count constant)}
 AUTO = "auto"
-AUTO_SLACK = {
-    "SiPad_layer_gap": ("SiPad_LayerThickness", "SiPad_dim_z", "SiPad_NLayers"),
-    "SiTarget_layer_gap": (
-        "SiTarget_LayerThickness", "SiTarget_dim_z", "SiTarget_NLayers"),
-}
+# EMPTY since the geometry was inverted: a detector's depth is now DERIVED from
+# its layers (dim_z = NLayers x LayerThickness) instead of being fixed in
+# advance, so there is no envelope left to stretch a slack thickness into. The
+# gaps that used to be `auto` -- SiPad_layer_gap and the SiTarget's layer slack
+# -- are plain length inputs, which is what makes them searchable. The
+# machinery is kept because the mechanism is still the right answer for any
+# future parameter whose budget moves with the others.
+AUTO_SLACK = {}
 # Floor an `auto` parameter never goes below: the slice has to stay in the
 # geometry (the index of the sensitive slice behind it depends on it) and Geant4
 # rejects a box of null extent, so a slack slice that is not needed shrinks to a
@@ -87,14 +90,25 @@ FRACTION_SUFFIX = "_frac"
 
 # (value, derived upper limit) pairs checked on the resolved geometry.
 LIMIT_PAIRS = [
-    ("SiPad_NLayers", "SiPad_NLayers_max"),
-    ("SiTarget_NLayers", "SiTarget_NLayers_max"),
-    # The XY gap is derived from a fraction now, so this can only fire on a
-    # fraction outside [0, 1] — which `summarize` reports directly. Kept because
-    # it is the check on the *rendered* geometry, and because it puts the gap in
-    # the summary in mm, which is what you actually want to read.
+    # NLayers <= NLayers_max is gone: with dim_z = NLayers x LayerThickness the
+    # old floor(dim_z/LayerThickness) is just NLayers again, so the check could
+    # never fail. What replaces it is the LONGITUDINAL BUDGET below, which is
+    # the constraint that actually exists.
+    #
+    # The XY gap is derived from a fraction, so this can only fire on a fraction
+    # outside [0, 1] — which `summarize` reports directly. Kept because it is
+    # the check on the *rendered* geometry, and because it puts the gap in the
+    # summary in mm, which is what you actually want to read.
     ("SiTarget_XY_plane_gap", "SiTarget_XY_plane_gap_max"),
 ]
+
+# The two silicon detectors plus their separation may not exceed
+# SiDetector_total_dim_z. This is a CEILING, not an envelope to fill: the
+# baseline uses 1684.1 of 2200 mm and the rest is headroom an optimizer may
+# spend on thicker absorbers, wider gaps or more layers. Checked on the
+# RESOLVED geometry, so it sees whatever the constants actually came out as.
+BUDGET = ("SiDetector_total_dim_z",
+          ("SiTarget_dim_z", "SiPad_dim_z", "SiTarget_SiPad_gap"))
 
 
 # ── rendering ───────────────────────────────────────────────────────────────
@@ -277,6 +291,23 @@ def summarize(compact_path):
         else:
             lines.append("  %-24s %9.3f  (max %.3f, margen %.3f)"
                          % (value, c[value], c[limit], c[limit] - c[value]))
+
+    # Longitudinal budget: the ceiling the two silicon detectors share. This is
+    # what replaced NLayers <= NLayers_max once dim_z became a consequence of
+    # the layer count rather than a fixed envelope. Rejecting here means the
+    # dry-run gate catches an over-long variant before anything is queued.
+    cap_name, parts = BUDGET
+    if cap_name in c and all(k in c for k in parts):
+        used = sum(c[k] for k in parts)
+        cap = c[cap_name]
+        detail = " + ".join("%s=%.1f" % (k, c[k]) for k in parts)
+        if used > cap + OVERLAP_TOL:
+            errors.append(
+                "presupuesto longitudinal excedido: %s = %.3f > %s = %.3f  (%s)"
+                % ("+".join(parts), used, cap_name, cap, detail))
+        else:
+            lines.append("  %-24s %9.3f  (techo %.3f, margen %.3f)"
+                         % ("SiDetector ocupado", used, cap, cap - used))
 
     # (label, z centre constant, full length constant); a detector whose
     # constants are absent (e.g. the EmulsionTarget, dropped from the PoC

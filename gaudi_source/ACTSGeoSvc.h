@@ -31,6 +31,8 @@ public:
   const Acts::GeometryContext& geometryContext() const override;
   const Acts::Surface* surfaceByAddress(
       int detID, int station, int layer, int plane) const override;
+  int layerOrdinalOf(const Acts::Surface* surface) const override;
+  int nLayersOf(int detID) const override;
 
 private:
   Gaudi::Property<std::string> m_compactFile{
@@ -53,4 +55,12 @@ private:
 
   // key = (detID, station, layerInDet, plane)
   std::map<std::tuple<int,int,int,int>, const Acts::Surface*> m_surfaceByAddressMap;
+
+  // Surface -> ordinal of its layer within its own detector, counted along the
+  // beam from 0. Every surface of one physical layer (the MTC's U/V/combined
+  // triplet, the SiTarget's StripX/StripY pair) shares one ordinal, so this is
+  // a layer index and not a surface index — see ISNDGeoSvc::layerOrdinalOf.
+  std::unordered_map<const Acts::Surface*, int> m_layerOrdinalBySurface;
+  // Layer count per detector, index = detID.
+  std::array<int, 3> m_nLayersByDet{0, 0, 0};
 };

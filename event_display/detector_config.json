@@ -3,150 +3,396 @@
     {
       "name": "SiTarget_StripX",
       "ntuple": "SiTargetMeas",
-      "filter": {"plane": 0},
-      "color": [1.0, 0.4, 0.7],
-      "voxel": {"x": 0.003775, "y": 9.75, "z": 0.015},
-      "geo_extract": {"path_contains": "SiTarget", "slice_index": 2}
+      "filter": {
+        "plane": 0
+      },
+      "color": [
+        0.2,
+        0.8,
+        1.0
+      ],
+      "voxel": {
+        "x": 0.003775,
+        "y": 9.75,
+        "z": 0.015
+      },
+      "geo_extract": {
+        "path_contains": "SiTarget",
+        "slice_index": 2
+      },
+      "origin_from": {
+        "ntuple": "SiTarget",
+        "meas_keys": [
+          "z",
+          "column",
+          "row",
+          "x"
+        ],
+        "hit_keys": [
+          "z",
+          "bf_column",
+          "bf_row",
+          "x"
+        ]
+      }
     },
     {
       "name": "SiTarget_StripY",
       "ntuple": "SiTargetMeas",
-      "filter": {"plane": 1},
-      "color": [1.0, 0.4, 0.7],
-      "voxel": {"x": 9.75, "y": 0.003775, "z": 0.015},
-      "geo_extract": {"path_contains": "SiTarget", "slice_index": 4}
+      "filter": {
+        "plane": 1
+      },
+      "color": [
+        0.2,
+        0.8,
+        1.0
+      ],
+      "voxel": {
+        "x": 9.75,
+        "y": 0.003775,
+        "z": 0.015
+      },
+      "geo_extract": {
+        "path_contains": "SiTarget",
+        "slice_index": 4
+      },
+      "origin_from": {
+        "ntuple": "SiTarget",
+        "meas_keys": [
+          "z",
+          "column",
+          "row",
+          "y"
+        ],
+        "hit_keys": [
+          "z",
+          "bf_column",
+          "bf_row",
+          "y"
+        ]
+      }
     },
     {
       "name": "SiPad",
       "ntuple": "SiPadMeas",
       "filter": {},
-      "color": [1.0, 0.5, 0.0],
-      "voxel": {"x": 0.28125, "y": 0.28125, "z": 0.0325},
-      "geo_extract": {"path_contains": "SiPad", "slice_index": 5}
+      "color": [
+        0.2,
+        0.8,
+        1.0
+      ],
+      "voxel": {
+        "x": 0.28125,
+        "y": 0.28125,
+        "z": 0.0325
+      },
+      "geo_extract": {
+        "path_contains": "SiPad",
+        "slice_index": 5
+      },
+      "origin_from": {
+        "ntuple": "SiPad",
+        "meas_keys": [
+          "z",
+          "x",
+          "y"
+        ],
+        "hit_keys": [
+          "z",
+          "x",
+          "y"
+        ]
+      }
     },
     {
       "name": "MTC40_SciFiU",
       "ntuple": "MTCSciFi",
-      "filter": {"bf_plane": 0},
+      "filter": {
+        "bf_plane": 0
+      },
       "energy_field": "E",
-      "color": [0.2, 0.8, 1.0],
-      "voxel": {"x": 0.05, "y": 30.0, "z": 0.0675},
+      "color": [
+        0.2,
+        0.8,
+        1.0
+      ],
+      "voxel": {
+        "x": 0.05,
+        "y": 30.0,
+        "z": 0.0675
+      },
       "stereo_deg": 5.0,
-      "geo_extract": {"path_contains": "MTC40", "slice_index": 2}
+      "geo_extract": {
+        "path_contains": "MTC40",
+        "slice_index": 2
+      }
     },
     {
       "name": "MTC40_SciFiV",
       "ntuple": "MTCSciFi",
-      "filter": {"bf_plane": 1},
+      "filter": {
+        "bf_plane": 1
+      },
       "energy_field": "E",
-      "color": [0.0, 0.6, 1.0],
-      "voxel": {"x": 0.05, "y": 30.0, "z": 0.0675},
+      "color": [
+        0.0,
+        0.6,
+        1.0
+      ],
+      "voxel": {
+        "x": 0.05,
+        "y": 30.0,
+        "z": 0.0675
+      },
       "stereo_deg": -5.0,
-      "geo_extract": {"path_contains": "MTC40", "slice_index": 4}
+      "geo_extract": {
+        "path_contains": "MTC40",
+        "slice_index": 4
+      }
     },
     {
       "name": "MTC40_Scint",
       "ntuple": "MTCScint",
       "filter": {},
       "energy_field": "E",
-      "color": [1.0, 0.8, 0.0],
-      "voxel": {"x": 2.5, "y": 2.5, "z": 0.75},
-      "geo_extract": {"path_contains": "MTC40", "slice_index": 6}
+      "color": [
+        1.0,
+        0.8,
+        0.0
+      ],
+      "voxel": {
+        "x": 2.5,
+        "y": 2.5,
+        "z": 0.75
+      },
+      "geo_extract": {
+        "path_contains": "MTC40",
+        "slice_index": 6
+      }
     },
     {
       "name": "MTC50_SciFiU",
       "ntuple": "MTCSciFi",
-      "filter": {"bf_plane": 0},
+      "filter": {
+        "bf_plane": 0
+      },
       "energy_field": "E",
-      "color": [0.2, 0.8, 1.0],
-      "voxel": {"x": 0.05, "y": 30.0, "z": 0.0675},
+      "color": [
+        0.2,
+        0.8,
+        1.0
+      ],
+      "voxel": {
+        "x": 0.05,
+        "y": 30.0,
+        "z": 0.0675
+      },
       "stereo_deg": 5.0,
-      "geo_extract": {"path_contains": "MTC50", "slice_index": 2}
+      "geo_extract": {
+        "path_contains": "MTC50",
+        "slice_index": 2
+      }
     },
     {
       "name": "MTC50_SciFiV",
       "ntuple": "MTCSciFi",
-      "filter": {"bf_plane": 1},
+      "filter": {
+        "bf_plane": 1
+      },
       "energy_field": "E",
-      "color": [0.0, 0.6, 1.0],
-      "voxel": {"x": 0.05, "y": 30.0, "z": 0.0675},
+      "color": [
+        0.0,
+        0.6,
+        1.0
+      ],
+      "voxel": {
+        "x": 0.05,
+        "y": 30.0,
+        "z": 0.0675
+      },
       "stereo_deg": -5.0,
-      "geo_extract": {"path_contains": "MTC50", "slice_index": 4}
+      "geo_extract": {
+        "path_contains": "MTC50",
+        "slice_index": 4
+      }
     },
     {
       "name": "MTC50_Scint",
       "ntuple": "MTCScint",
       "filter": {},
       "energy_field": "E",
-      "color": [1.0, 0.8, 0.0],
-      "voxel": {"x": 2.5, "y": 2.5, "z": 0.75},
-      "geo_extract": {"path_contains": "MTC50", "slice_index": 6}
+      "color": [
+        1.0,
+        0.8,
+        0.0
+      ],
+      "voxel": {
+        "x": 2.5,
+        "y": 2.5,
+        "z": 0.75
+      },
+      "geo_extract": {
+        "path_contains": "MTC50",
+        "slice_index": 6
+      }
     },
     {
       "name": "MTC60_SciFiU",
       "ntuple": "MTCSciFi",
-      "filter": {"bf_plane": 0},
+      "filter": {
+        "bf_plane": 0
+      },
       "energy_field": "E",
-      "color": [0.2, 0.8, 1.0],
-      "voxel": {"x": 0.05, "y": 30.0, "z": 0.0675},
+      "color": [
+        0.2,
+        0.8,
+        1.0
+      ],
+      "voxel": {
+        "x": 0.05,
+        "y": 30.0,
+        "z": 0.0675
+      },
       "stereo_deg": 5.0,
-      "geo_extract": {"path_contains": "MTC60", "slice_index": 2}
+      "geo_extract": {
+        "path_contains": "MTC60",
+        "slice_index": 2
+      }
     },
     {
       "name": "MTC60_SciFiV",
       "ntuple": "MTCSciFi",
-      "filter": {"bf_plane": 1},
+      "filter": {
+        "bf_plane": 1
+      },
       "energy_field": "E",
-      "color": [0.0, 0.6, 1.0],
-      "voxel": {"x": 0.05, "y": 30.0, "z": 0.0675},
+      "color": [
+        0.0,
+        0.6,
+        1.0
+      ],
+      "voxel": {
+        "x": 0.05,
+        "y": 30.0,
+        "z": 0.0675
+      },
       "stereo_deg": -5.0,
-      "geo_extract": {"path_contains": "MTC60", "slice_index": 4}
+      "geo_extract": {
+        "path_contains": "MTC60",
+        "slice_index": 4
+      }
     },
     {
       "name": "MTC60_Scint",
       "ntuple": "MTCScint",
       "filter": {},
       "energy_field": "E",
-      "color": [1.0, 0.8, 0.0],
-      "voxel": {"x": 2.5, "y": 2.5, "z": 0.75},
-      "geo_extract": {"path_contains": "MTC60", "slice_index": 6}
+      "color": [
+        1.0,
+        0.8,
+        0.0
+      ],
+      "voxel": {
+        "x": 2.5,
+        "y": 2.5,
+        "z": 0.75
+      },
+      "geo_extract": {
+        "path_contains": "MTC60",
+        "slice_index": 6
+      }
     }
   ],
   "geometry": [
     {
       "name": "SiTarget planes",
-      "color": [0.2, 0.4, 0.9],
-      "transparency": 93,
-      "voxel": {"x": 20.0, "y": 20.0, "z": 0.015},
-      "geo_extract": {"path_contains": "SiTarget", "slice_index": 0}
+      "color": [
+        0.6,
+        0.6,
+        0.6
+      ],
+      "transparency": 97,
+      "voxel": {
+        "x": 20.0,
+        "y": 20.0,
+        "z": 0.015
+      },
+      "geo_extract": {
+        "path_contains": "SiTarget",
+        "slice_index": 0
+      }
     },
     {
       "name": "SiPad planes",
-      "color": [0.2, 0.7, 0.2],
-      "transparency": 93,
-      "voxel": {"x": 27.0, "y": 27.0, "z": 0.0325},
-      "geo_extract": {"path_contains": "SiPad", "slice_index": 0}
+      "color": [
+        0.6,
+        0.6,
+        0.6
+      ],
+      "transparency": 97,
+      "voxel": {
+        "x": 27.0,
+        "y": 27.0,
+        "z": 0.0325
+      },
+      "geo_extract": {
+        "path_contains": "SiPad",
+        "slice_index": 0
+      }
     },
     {
       "name": "MTC40 layers",
-      "color": [0.6, 0.6, 0.6],
-      "transparency": 85,
-      "voxel": {"x": 30.0, "y": 30.0, "z": 2.735},
-      "geo_extract": {"path_contains": "MTC40", "slice_index": 0}
+      "color": [
+        0.6,
+        0.6,
+        0.6
+      ],
+      "transparency": 92,
+      "voxel": {
+        "x": 30.0,
+        "y": 30.0,
+        "z": 2.735
+      },
+      "geo_extract": {
+        "path_contains": "MTC40",
+        "slice_index": 0
+      }
     },
     {
       "name": "MTC50 layers",
-      "color": [0.6, 0.6, 0.6],
-      "transparency": 85,
-      "voxel": {"x": 30.0, "y": 30.0, "z": 2.735},
-      "geo_extract": {"path_contains": "MTC50", "slice_index": 0}
+      "color": [
+        0.6,
+        0.6,
+        0.6
+      ],
+      "transparency": 92,
+      "voxel": {
+        "x": 30.0,
+        "y": 30.0,
+        "z": 2.735
+      },
+      "geo_extract": {
+        "path_contains": "MTC50",
+        "slice_index": 0
+      }
     },
     {
       "name": "MTC60 layers",
-      "color": [0.6, 0.6, 0.6],
-      "transparency": 85,
-      "voxel": {"x": 30.0, "y": 30.0, "z": 2.735},
-      "geo_extract": {"path_contains": "MTC60", "slice_index": 0}
+      "color": [
+        0.6,
+        0.6,
+        0.6
+      ],
+      "transparency": 92,
+      "voxel": {
+        "x": 30.0,
+        "y": 30.0,
+        "z": 2.735
+      },
+      "geo_extract": {
+        "path_contains": "MTC60",
+        "slice_index": 0
+      }
     }
   ]
 }

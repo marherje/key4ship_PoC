@@ -22,6 +22,10 @@ struct ContribData {
   // PDG is not used downstream in this pipeline.
   int   source_id;
   int   pdg;         // real Geant4 PDG code, read from the SiTarget/SiPad/MTCSciFi/MTCScintContribPDGs parameter
+  // MCParticle index within its source, read from the matching
+  // *ContribParticleIDs parameter. Identifies the particle, not the species,
+  // so two same-species particles of one shower stay distinct. -1 when absent.
+  int   particle_id;
   // Exact Geant4 step position inside the sensitive volume
   float stepX, stepY, stepZ;
   // Centre of the parent SimCalorimeterHit sensitive volume
@@ -108,6 +112,17 @@ public:
       std::vector<int> pdgsMTCScint =
           frame.getParameter<std::vector<int>>("MTCScintContribPDGs").value_or(std::vector<int>{});
 
+      // Per-contribution MCParticle indices, same layout and same
+      // backward-compatible value_or({}) as the PDG vectors above.
+      std::vector<int> partsSiTarget =
+          frame.getParameter<std::vector<int>>("SiTargetContribParticleIDs").value_or(std::vector<int>{});
+      std::vector<int> partsSiPad =
+          frame.getParameter<std::vector<int>>("SiPadContribParticleIDs").value_or(std::vector<int>{});
+      std::vector<int> partsMTCSciFi =
+          frame.getParameter<std::vector<int>>("MTCSciFiContribParticleIDs").value_or(std::vector<int>{});
+      std::vector<int> partsMTCScint =
+          frame.getParameter<std::vector<int>>("MTCScintContribParticleIDs").value_or(std::vector<int>{});
+
       auto makeSourceMap = [](const edm4hep::SimCalorimeterHitCollection& coll,
                               const std::vector<int>& ids) {
         std::unordered_map<uint64_t, int> m;
@@ -124,10 +139,12 @@ public:
       auto mtcScintSourceMap = makeSourceMap(inScint,  sourceIDsMTCScint);
 
       // --- 1. Build flat, sorted lists of timed contributions ---
-      // pdgVec is parallel to the contributions across all hits in visitation order.
-      // If pdgVec is empty (backward compatibility), cd.pdg defaults to 0.
+      // pdgVec and partVec are parallel to the contributions across all hits in
+      // visitation order. If either is empty (backward compatibility), cd.pdg
+      // defaults to 0 and cd.particle_id to -1.
       auto buildList = [](const edm4hep::SimCalorimeterHitCollection& coll,
-                          const std::vector<int>& pdgVec)
+                          const std::vector<int>& pdgVec,
+                          const std::vector<int>& partVec)
           -> std::vector<TimedContrib> {
         std::vector<TimedContrib> list;
         size_t pdgIdx = 0;
@@ -136,11 +153,13 @@ public:
           for (const auto& contrib : hit.getContributions()) {
             const auto& sp = contrib.getStepPosition();
             const int realPDG = (pdgIdx < pdgVec.size()) ? pdgVec[pdgIdx] : 0;
+            const int partID  = (pdgIdx < partVec.size()) ? partVec[pdgIdx] : -1;
             ++pdgIdx;
             list.push_back({hit.getCellID(),
                             {contrib.getEnergy(), contrib.getTime(),
                              contrib.getPDG(),  // source_id encoded in PDG field by EventShuffler
                              realPDG,
+                             partID,
                              sp.x, sp.y, sp.z,
                              hp.x, hp.y, hp.z}});
           }
@@ -152,10 +171,10 @@ public:
         return list;
       };
 
-      const auto siTargetList = buildList(inTarget, pdgsSiTarget);
-      const auto siPadList    = buildList(inPad,    pdgsSiPad);
-      const auto mtcSciFiList = buildList(inSciFi,  pdgsMTCSciFi);
-      const auto mtcScintList = buildList(inScint,  pdgsMTCScint);
+      const auto siTargetList = buildList(inTarget, pdgsSiTarget, partsSiTarget);
+      const auto siPadList    = buildList(inPad,    pdgsSiPad,    partsSiPad);
+      const auto mtcSciFiList = buildList(inSciFi,  pdgsMTCSciFi, partsMTCSciFi);
+      const auto mtcScintList = buildList(inScint,  pdgsMTCScint, partsMTCScint);
 
       if (siTargetList.empty() && siPadList.empty() &&
           mtcSciFiList.empty() && mtcScintList.empty()) {
@@ -200,8 +219,9 @@ public:
       podio::ROOTWriter writer(m_outputFile.value());
       long long totalContribs = 0;
 
-      // Returns hits collection, contributions collection, parallel source_id vector,
-      // and parallel per-contribution real PDG vector.
+      // Returns hits collection, contributions collection, parallel source_id
+      // vector, parallel per-contribution real PDG vector, and parallel
+      // per-contribution MCParticle-index vector.
       auto buildWindowColl =
           [&](int wIdx,
               float t_window_start,
@@ -210,14 +230,16 @@ public:
           -> std::tuple<edm4hep::SimCalorimeterHitCollection,
                         edm4hep::CaloHitContributionCollection,
                         std::vector<int>,
+                        std::vector<int>,
                         std::vector<int>> {
         edm4hep::SimCalorimeterHitCollection   hits;
         edm4hep::CaloHitContributionCollection contribs;
         std::vector<int> sourceIDs;
-        std::vector<int> contribPDGs;  // per-contribution real Geant4 PDG codes
+        std::vector<int> contribPDGs;   // per-contribution real Geant4 PDG codes
+        std::vector<int> contribParts;  // per-contribution MCParticle indices
 
         auto it = windows.find(wIdx);
-        if (it == windows.end()) return {std::move(hits), std::move(contribs), std::move(sourceIDs), std::move(contribPDGs)};
+        if (it == windows.end()) return {std::move(hits), std::move(contribs), std::move(sourceIDs), std::move(contribPDGs), std::move(contribParts)};
 
         for (const auto& [cellID, contribVec] : it->second) {
           auto hit = hits.create();
@@ -236,12 +258,13 @@ public:
             contrib.setStepPosition({cd.stepX, cd.stepY, cd.stepZ});
             hit.addToContributions(contrib);
             contribPDGs.push_back(cd.pdg);  // parallel real PDG (per contribution)
+            contribParts.push_back(cd.particle_id);
             totalE += cd.energy;
             ++totalContribs;
           }
           hit.setEnergy(totalE);
         }
-        return {std::move(hits), std::move(contribs), std::move(sourceIDs), std::move(contribPDGs)};
+        return {std::move(hits), std::move(contribs), std::move(sourceIDs), std::move(contribPDGs), std::move(contribParts)};
       };
 
       for (int wIdx = 0; wIdx < numWindows; ++wIdx) {
@@ -249,13 +272,13 @@ public:
             t_start + static_cast<float>(wIdx) * static_cast<float>(m_windowSize);
         podio::Frame windowFrame;
 
-        auto [siTargetColl,  siTargetContribs,  wSrcTarget,  wPdgTarget]  =
+        auto [siTargetColl,  siTargetContribs,  wSrcTarget,  wPdgTarget,  wPartTarget] =
             buildWindowColl(wIdx, t_window_start, windowsSiTarget,  siTargetSourceMap);
-        auto [siPadColl,    siPadContribs,    wSrcPad,    wPdgPad]    =
+        auto [siPadColl,    siPadContribs,    wSrcPad,    wPdgPad,    wPartPad] =
             buildWindowColl(wIdx, t_window_start, windowsSiPad,     siPadSourceMap);
-        auto [mtcSciFiColl, mtcSciFiContribs, wSrcSciFi,  wPdgSciFi]  =
+        auto [mtcSciFiColl, mtcSciFiContribs, wSrcSciFi,  wPdgSciFi,  wPartSciFi] =
             buildWindowColl(wIdx, t_window_start, windowsMTCSciFi,  mtcSciFiSourceMap);
-        auto [mtcScintColl, mtcScintContribs, wSrcScint,  wPdgScint]  =
+        auto [mtcScintColl, mtcScintContribs, wSrcScint,  wPdgScint,  wPartScint] =
             buildWindowColl(wIdx, t_window_start, windowsMTCScint,  mtcScintSourceMap);
 
         windowFrame.put(std::move(siTargetColl),    m_outTargetName.value());
@@ -276,6 +299,11 @@ public:
         windowFrame.putParameter("SiPadContribPDGs",    wPdgPad);
         windowFrame.putParameter("MTCSciFiContribPDGs", wPdgSciFi);
         windowFrame.putParameter("MTCScintContribPDGs", wPdgScint);
+        // Per-contribution MCParticle indices (same layout as the PDGs above)
+        windowFrame.putParameter("SiTargetContribParticleIDs", wPartTarget);
+        windowFrame.putParameter("SiPadContribParticleIDs",    wPartPad);
+        windowFrame.putParameter("MTCSciFiContribParticleIDs", wPartSciFi);
+        windowFrame.putParameter("MTCScintContribParticleIDs", wPartScint);
         windowFrame.putParameter("t_window_start",    t_window_start);
 
         writer.writeFrame(windowFrame, "events");

@@ -27,8 +27,12 @@ from ..core.types import Result, Trial
 from .geometry import Geometry, repo_root
 from .metrics import CostModel
 
+# Defaults of the mu_pi chain. An experiment that scores a different chain
+# (GENIE, say) overrides them through EvaluatorConfig rather than by editing
+# code -- see conf/evaluator/snd_genie.yaml.
 SIM_FILE = "output_mu_pi.edm4hep.root"
 HITS_FILE = "ShipHits.root"
+JOBS = ("job1_overlay", "job4_tracking", "job5_rntuple")
 COMPACT_FILE = "geometry.xml"
 TRIAL_SPEC = "trial.json"
 
@@ -42,6 +46,11 @@ class EvaluatorConfig:
     python: str = "python3"
     # Where trial directories go. The CLI fills this in from the run directory.
     runs_dir: str | None = None
+    # ... unless this is set: then the trials live here and the run directory
+    # keeps only the store, the config and the report. That is how a campaign
+    # goes to EOS without putting sqlite on a FUSE mount (its locking is not
+    # to be trusted there) -- e.g. evaluator.trials_dir=/eos/.../mobo/<run>/trials.
+    trials_dir: str | None = None
     cost_model: dict[str, float] = field(default_factory=dict)
     # Paths into the existing project. Defaults are derived from the repo root;
     # they exist in the config so an experiment can point at a modified chain
@@ -50,6 +59,23 @@ class EvaluatorConfig:
     analysis_dir: str | None = None
     run_sim: str | None = None
     parse_geometry: str | None = None
+    # Which chain a trial runs. Defaults reproduce the mu_pi chain exactly.
+    sim_file: str | None = None
+    hits_file: str | None = None
+    jobs: list[str] | None = None
+    # When true the payload also reads the track RNTuples and reports
+    # eff_track. Off by default: job5_rntuple.py writes no track container
+    # under that name, and a missing one must not look like a bad geometry.
+    track_metrics: bool = False
+    # Keep a trial's ROOT files after its metrics are computed. False by
+    # default: they are ~37 MB per trial and pure intermediate state.
+    keep_intermediate: bool = False
+    # Generate the GENIE interactions on each variant's own geometry instead
+    # of replaying a shared HepMC. None keeps the shared-file chain; a dict
+    # names the scripts of the generation step (paths relative to the repo
+    # root) and the frame parameters -- see conf/evaluator/snd_genie_gen.yaml.
+    # `nevents` is then gevgen_fnal's -n: interactions per trial.
+    genie: dict[str, Any] | None = None
 
     @classmethod
     def from_config(cls, cfg: Any) -> EvaluatorConfig:
@@ -59,6 +85,10 @@ class EvaluatorConfig:
             kwargs["cost_model"] = {
                 k: float(v) for k, v in dict(kwargs["cost_model"]).items()
             }
+        if kwargs.get("genie"):
+            kwargs["genie"] = {str(k): v for k, v in dict(kwargs["genie"]).items()}
+        else:
+            kwargs["genie"] = None
         return cls(**kwargs)
 
 
@@ -69,14 +99,52 @@ class SNDEvaluator(Evaluator):
         self.analysis_dir = Path(
             self.cfg.analysis_dir or repo / "Optimization" / "Analysis"
         )
-        self.run_sim = Path(
-            self.cfg.run_sim
-            or repo / "Optimization" / "Simulation" / "run_scripts" / "run_sim.py"
+
+        # A configured path may be given relative to the repo root, which is
+        # the only anchor a config file can name portably (Hydra has no
+        # interpolation for it, and the driver's cwd is wherever it was run).
+        def _resolve(value, default):
+            if not value:
+                return default
+            path = Path(value)
+            return path if path.is_absolute() else repo / path
+
+        self.run_sim = _resolve(
+            self.cfg.run_sim,
+            repo / "Optimization" / "Simulation" / "run_scripts" / "run_sim.py",
         )
         self.parse_geometry = Path(
             self.cfg.parse_geometry
             or repo / "simulation" / "geometry" / "parse_geometry.py"
         )
+        # The generation step's scripts, resolved once so the payload -- which
+        # runs with the trial directory as cwd -- only ever sees absolute paths.
+        self.genie: dict[str, Any] | None = None
+        if self.cfg.genie:
+            g = dict(self.cfg.genie)
+            self.genie = {
+                "run_gevgen": str(
+                    _resolve(
+                        g.get("run_gevgen"),
+                        repo / "simulation" / "run_script" / "run_gevgen.sh",
+                    )
+                ),
+                "shift_gdml": str(
+                    _resolve(
+                        g.get("shift_gdml"),
+                        repo / "simulation" / "geometry" / "gdml" / "shift_gdml_frame.py",
+                    )
+                ),
+                "convert": str(
+                    _resolve(
+                        g.get("convert"),
+                        repo / "simulation" / "run_script" / "genie_gst_to_hepmc.py",
+                    )
+                ),
+                "dz_cm": float(g.get("dz_cm", 2576.0)),
+                "z_shift_m": float(g.get("z_shift_m", -25.76)),
+                "world_half_size_m": float(g.get("world_half_size_m", 20.0)),
+            }
         self.geometry = Geometry(geo_dir=self.cfg.geometry_dir)
         self.cost_model = CostModel.from_config(self.cfg.cost_model)
         # Absolute, always: the payload runs with its own workdir as cwd, so a
@@ -84,7 +152,11 @@ class SNDEvaluator(Evaluator):
         runs_dir = Path(
             self.cfg.runs_dir or (repo / "Optimization" / "mobo" / "runs" / "adhoc")
         )
-        self.trials_dir = runs_dir.resolve() / "trials"
+        self.trials_dir = (
+            Path(self.cfg.trials_dir).resolve()
+            if self.cfg.trials_dir
+            else runs_dir.resolve() / "trials"
+        )
 
     # ── the Evaluator contract ───────────────────────────────────────────────
 
@@ -133,8 +205,12 @@ class SNDEvaluator(Evaluator):
                     "seed": trial.seed,
                     "nevents": int(self.cfg.nevents),
                     "compact": str(compact),
-                    "sim_file": SIM_FILE,
-                    "hits_file": HITS_FILE,
+                    "sim_file": self.cfg.sim_file or SIM_FILE,
+                    "hits_file": self.cfg.hits_file or HITS_FILE,
+                    "jobs": list(self.cfg.jobs or JOBS),
+                    "track_metrics": bool(self.cfg.track_metrics),
+                    "keep_intermediate": bool(self.cfg.keep_intermediate),
+                    "genie": self.genie,
                     "analysis_dir": str(self.analysis_dir),
                     "run_sim": str(self.run_sim),
                     "parse_geometry": str(self.parse_geometry),
@@ -179,6 +255,8 @@ class SNDEvaluator(Evaluator):
     def describe(self) -> dict[str, Any]:
         return {
             "nevents": self.cfg.nevents,
+            "genie": self.genie,
+            "trials_dir": str(self.trials_dir),
             "output_level": self.cfg.output_level,
             "geometry_dir": str(self.geometry.geo_dir),
             "analysis_dir": str(self.analysis_dir),
@@ -203,11 +281,22 @@ class SNDEvaluator(Evaluator):
         the LD_LIBRARY_PATH that `init_key4ship.sh` prepends. Without it ddsim
         dies with "FAILED to create segmentation ... [Missing factory]".
         """
+        tools = ["ddsim", "k4run"]
+        if self.genie:
+            tools.append("geoConverter")
         problems = [
-            f"{tool} is not on PATH"
-            for tool in ("ddsim", "k4run")
-            if shutil.which(tool) is None
+            f"{tool} is not on PATH" for tool in tools if shutil.which(tool) is None
         ]
+        if self.genie:
+            problems += [
+                f"{path} does not exist"
+                for path in (
+                    self.genie["run_gevgen"],
+                    self.genie["shift_gdml"],
+                    self.genie["convert"],
+                )
+                if not Path(path).is_file()
+            ]
         install = repo_root() / "install"
         if install.is_dir():
             search = os.environ.get("LD_LIBRARY_PATH", "").split(":")

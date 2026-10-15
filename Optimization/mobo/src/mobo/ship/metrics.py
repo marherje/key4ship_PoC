@@ -38,6 +38,16 @@ HIT_CONTAINERS = {
 }
 
 
+# Track RNTuples written by job5_rntuple_seq.py, and the metric suffix each
+# becomes. GlobalTracks first: it is the one `eff_track` is defined on.
+TRACK_CONTAINERS = {
+    "GlobalTracks": "global",
+    "SiTargetTracks": "sitarget",
+    "SiPadTracks": "sipad",
+    "MTCTracks": "mtc",
+}
+
+
 @dataclass(frozen=True)
 class CostModel:
     """Coefficients of the proxy cost, in k€ per unit.
@@ -154,9 +164,74 @@ def analytic_metrics(
 
 def count_entries(path: str, container: str) -> int:
     """Rows of one RNTuple. Same call `compute_fom.py` makes."""
+    import gc
+
     import ROOT
 
-    return int(ROOT.RNTupleReader.Open(container, path).GetNEntries())
+    reader = ROOT.RNTupleReader.Open(container, path)
+    n = int(reader.GetNEntries())
+    # See distinct_events() for why the reader is released by hand.
+    del reader
+    gc.collect()
+    return n
+
+
+def distinct_events(path: str, container: str) -> set[int]:
+    """The set of event indices in which `container` has at least one row.
+
+    `window_id` is the event index every RNTuple written by EDM4HEP2RNTuple
+    carries (the name is historical: one event is one time window). Read
+    through GetView rather than RDataFrame, which this ROOT build does not
+    expose for RNTuple.
+    """
+    import gc
+
+    import ROOT
+
+    reader = ROOT.RNTupleReader.Open(container, path)
+    view = reader.GetView["std::int32_t"]("window_id")
+    events = {int(view(i)) for i in reader.GetEntryRange()}
+    # Released by hand, and this is NOT tidiness. Left to the interpreter, the
+    # view and its reader are torn down after ROOT has already dismantled
+    # itself, and RColumn's destructor segfaults: the payload then dies with
+    # signal 129 AFTER computing correct metrics but BEFORE writing its DONE
+    # sentinel, which the loop reports as a lost trial. Measured on ROOT 6.38.
+    del view
+    del reader
+    gc.collect()
+    return events
+
+
+def track_metrics(
+    path: str, nevents: int, containers: dict[str, str] | None = None
+) -> dict[str, float]:
+    """Track counts and the per-event tracking efficiency.
+
+    `eff_track` -- the fraction of events holding at least one GlobalTrack --
+    is the quantity this project has used throughout as "did we reconstruct
+    anything at all", and the one an optimization over GENIE events wants:
+    a neutrino interaction either yields a track or it does not, and counting
+    tracks instead would reward hadronic showers that fragment into many short
+    segments.
+
+    The denominator is the REQUESTED event count, not the number observed.
+    Every trial replays the same HepMC primaries, so the denominator is a
+    constant across the campaign and cannot bias the ranking; using an observed
+    count instead would silently rescale a trial whose simulation was truncated.
+    `hit_metrics` records `n_events_seen` next to it, so a trial whose
+    simulation was truncated is visible rather than looking like a bad geometry.
+    """
+    containers = containers or TRACK_CONTAINERS
+    metrics: dict[str, float] = {}
+    for ntuple, key in containers.items():
+        try:
+            metrics["ntracks_" + key] = float(count_entries(path, ntuple))
+            metrics["nevents_with_" + key] = float(len(distinct_events(path, ntuple)))
+        except Exception:  # noqa: BLE001 - an absent RNTuple is not an error here
+            continue
+    if "nevents_with_global" in metrics and nevents > 0:
+        metrics["eff_track"] = metrics["nevents_with_global"] / float(nevents)
+    return metrics
 
 
 def hit_metrics(path: str, containers: dict[str, str] | None = None) -> dict[str, float]:
@@ -168,9 +243,18 @@ def hit_metrics(path: str, containers: dict[str, str] | None = None) -> dict[str
     """
     containers = containers or HIT_CONTAINERS
     metrics: dict[str, float] = {}
+    seen: set[int] = set()
     for ntuple, key in containers.items():
         try:
             metrics[key] = float(count_entries(path, ntuple))
+            seen |= distinct_events(path, ntuple)
         except Exception:  # noqa: BLE001 - an absent RNTuple is not an error here
             continue
+    # Truncation detector, and it has to be built on HITS rather than on tracks:
+    # the last events of a run routinely yield no track at all, so the highest
+    # event index among the track RNTuples undercounts even on a complete run.
+    # Every simulated event deposits something somewhere, so the hit containers
+    # do see the full range.
+    if seen:
+        metrics["n_events_seen"] = float(max(seen) + 1)
     return metrics

@@ -76,6 +76,9 @@ cd event_display
 
 # e + pi                       -- events 0-99, only ~20 have tracks
 ./launch.sh ../gaudi_jobs/e_pi_pipeline/ShipHits.root  ../simulation/geometry/SND_compact.xml 3
+
+# GENIE all-flavours (gst entries 0-199)   -- events 0-199, 52 have tracks
+./launch.sh ../gaudi_jobs/genie_pipeline/ShipHits.root ../simulation/geometry/SND_compact.xml 37
 ```
 
 The other `gaudi_jobs/*_pipeline/` directories hold the Gaudi job scripts but
@@ -134,6 +137,40 @@ produced:
 
 The parameters that produced a trial, plus a printed z-extent summary of every
 subdetector, are in that trial's `params.yaml`.
+
+#### `snd_genie_100` — the GENIE campaign (2026-09-11)
+
+The production campaigns discard every ROOT file once `metrics.json` is
+written (`keep_intermediate: false`), on purpose: 100 trials x ~200 MB would
+not fit the AFS quota. So a campaign trial cannot be displayed as it is. To look
+at one, re-run it outside the campaign tree with `keep_intermediate` on: copy
+`geometry.xml`, `params.yaml`, `trial.json`, `job.sh`, `job.sub` from
+`trials/tNNNNN/` to `display/tNNNNN/`, set `"keep_intermediate": true` in the
+copied `trial.json`, rewrite the `/trials/` paths to `/display/` in the three
+files that carry them, and `condor_submit` the copied `job.sub` (~5 min for
+200 events). The trials database is untouched. Two Sobol trials have been
+re-run that way, with the tracking of 2026-09-11 (sign fix, navigator fix,
+shower purges), and their `ShipHits_seq.root` is on disk:
+
+| Trial | SiTarget | SiPad | Use |
+|-------|----------|-------|-----|
+| `t00003` | **97** layers, W 2.1 mm | **18** layers, W 10.9 mm | many layers in both |
+| `t00012` | **25** layers, W 3.7 mm | **4** layers, W 17.7 mm | the Sobol minimum in both |
+
+Both ran on the same 200 GENIE interactions, so the same event index is the
+same neutrino interaction in the two geometries — event **23** is a global
+track spliced through all three detectors in both:
+
+```bash
+cd event_display
+D=../Optimization/mobo/runs/snd_genie_100/display
+./launch.sh $D/t00003/ShipHits_seq.root $D/t00003/geometry.xml 23   # 97 / 18 layers
+./launch.sh $D/t00012/ShipHits_seq.root $D/t00012/geometry.xml 23   # 25 /  4 layers
+```
+
+Other single-global events with hits in SiTarget and SiPad: `t00003` 15, 18,
+119, 128; `t00012` 15, 71, 113, 191 (15, 113 and 191 are three-detector
+splices).
 
 #### Two geometries from the `snd_proxy` run
 

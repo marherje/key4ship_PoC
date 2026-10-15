@@ -40,3 +40,8 @@ extra_submit: {}
 
 # Defaults to <repo>/init_key4ship.sh.
 init_script: null
+
+# job.sh / job.sub / condor.{log,out,err} go here, one dir per trial. Null =
+# <run_dir>/jobs (AFS): CERN's standard schedds refuse /eos paths in a submit
+# file, so this must not follow the trials to EOS.
+submit_dir: null

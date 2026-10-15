@@ -36,9 +36,12 @@
          They sit at the top of <define> because DD4hep evaluates constants in
          document order, and the SiPad/SiTarget blocks below already use them. -->
     <constant name="SiPad_WThickness"        value="XSiPad_WThicknessX"/> <!-- Default: 10 mm -->
-    <constant name="SiPad_layer_gap"          value="XSiPad_layer_gapX"/> <!-- Closes the layer, from the chip to the W of the next one, and the only slack in it. `auto` in the YAML makes config.py size it so NLayers layers span dim_z and the sensitive planes come out equidistant; 1e-6 mm (its minimum, Geant4 rejects a slice of null extent) leaves the leftover of dim_z at the downstream end. -->
+    <!-- Closes the layer, from the chip to the W of the next one, and the only
+         slack in it. It is a LENGTH INPUT now, not `auto`: the detector's depth
+         follows from its layers rather than the layers being stretched to fill
+         a fixed depth. -->
+    <constant name="SiPad_layer_gap"          value="XSiPad_layer_gapX"/> <!-- Default: 1 mm -->
     <constant name="SiPad_frame_gap"          value="XSiPad_frame_gapX"/> <!-- Default: 0.1 mm. Gap between the W and the carbon frame: they sit essentially flush. -->
-    <constant name="SiPad_dim_z"              value="XSiPad_dim_zX"/> <!-- Default: 370 mm -->
     <constant name="SiPad_NLayers"            value="XSiPad_NLayersX"/> <!-- Default: 22 -->
 
     <constant name="SiTarget_WThickness"     value="XSiTarget_WThicknessX"/> <!-- Default: 3.5 mm -->
@@ -50,7 +53,12 @@
          SiTarget_dim_z exactly and the sensitive planes come out equidistant,
          which makes NLayers the only knob for the sampling pitch. Exactly the
          role SiPad_layer_gap already plays. -->
-    <constant name="SiTarget_layer_gap"       value="XSiTarget_layer_gapX"/> <!-- Default: auto -->
+    <!-- Air a layer carries beyond its rigid content (W + 2 module offsets +
+         2 sensor planes). It is a LENGTH INPUT: together with NLayers it sets
+         the detector's depth, instead of being sized to fill a depth fixed in
+         advance. SiTarget_XY_plane_gap_frac below splits it between the two
+         sensitive planes and the end of the layer. -->
+    <constant name="SiTarget_layer_slack"     value="XSiTarget_layer_slackX"/> <!-- Default: 4.9 mm -->
     <!-- Where the Y plane sits between the X plane and the W of the next layer,
          as a dimensionless fraction of the air the pitch leaves over — NOT a
          length. 0 puts the Y plane against the X plane (the module is closed up
@@ -153,27 +161,39 @@
 
 
     <!-- Directly derived parameters -->
+    <!-- The detector IS its layers: depth follows from the layer count and the
+         layer thickness, never the other way round. -->
+    <!-- Envelope slack: the SiPad box is its layers plus this. The committed
+         baseline has SiPad_dim_z = 370 mm with 22 layers of 16.55 mm occupying
+         364.1, i.e. 5.9 mm of unused envelope, and the layers are CENTRED in
+         it. That is the geometry the GENIE MC was generated on, so the slack
+         has to be reproducible rather than assumed away; 0 makes the envelope
+         hug the layers and shifts every SiPad plane ~3 mm downstream. -->
+    <constant name="SiPad_env_slack"          value="XSiPad_env_slackX"/> <!-- Default: 5.9 mm -->
+    <constant name="SiPad_dim_z"              value="SiPad_NLayers*SiPad_LayerThickness+SiPad_env_slack"/>
     <constant name="SiPad_z_position"         value="-SiPad_dim_z/2.0"/>
-    <constant name="SiPad_NLayers_max"        value="floor(SiPad_dim_z/SiPad_LayerThickness)"/>
 
     <!-- Total z available to SiTarget + SiPad. A zero-sum budget: every mm the
          SiPad takes is one the SiTarget loses. Was 1700 mm. -->
+    <!-- CEILING for the two silicon detectors together, not an envelope to be
+         filled. config.py rejects a variant whose SiTarget + SiPad + their
+         separation exceeds it, before anything is queued. The baseline uses
+         1684.1 of these 2200 mm; the remaining 515.9 mm are what an optimizer
+         may spend on thicker absorbers, wider layer gaps, more layers or a
+         larger detector separation. -->
     <constant name="SiDetector_total_dim_z"   value="2200*mm"/>
-    <constant name="SiTarget_dim_z"           value="SiDetector_total_dim_z-SiPad_dim_z"/>
-    <constant name="SiTarget_z_position"      value="-SiTarget_dim_z/2.0-SiPad_dim_z"/>
-    <!-- All the air a layer has to give, now that the pitch is SiTarget_dim_z /
-         SiTarget_NLayers rather than an input: the layer minus its rigid content
-         (W, the two module offsets and the two sensors), minus what
-         SiTarget_layer_gap must keep to stay a legal slice. The 2e-4 mm reserved
-         is twice config.py's AUTO_EPS, so that at SiTarget_XY_plane_gap = this
-         maximum the closing gap still lands an AUTO_EPS clear of its AUTO_MIN
-         floor. Reserving exactly AUTO_EPS + AUTO_MIN is the tight answer and it
-         does not survive contact with floating point: the subtraction lands a
-         fraction of an ulp below AUTO_MIN and `auto` refuses a geometry that
-         does fit. 0.2 um is nothing next to a 15 mm pitch.
-         SiTarget_XY_plane_gap decides how this air is split between the two Si
-         planes and the space after them; it never changes the pitch. -->
-    <constant name="SiTarget_XY_plane_gap_max"    value="SiTarget_dim_z/SiTarget_NLayers-SiTarget_WThickness-2*SiTarget_module_offset-2*SiTarget_sensor_thickness-2e-4*mm"/>
+
+    <!-- Separation between the downstream face of the SiTarget and the
+         upstream face of the SiPad. 2*env_safety, not 0: each envelope is
+         inflated by env_safety, so a literal zero makes ROOT report a 0.002 mm
+         overlap between the two. -->
+    <constant name="SiTarget_SiPad_gap"       value="XSiTarget_SiPad_gapX"/> <!-- Default: 2*env_safety -->
+    <!-- The air the layer has, now an input (SiTarget_layer_slack) rather than
+         whatever was left over from dividing a fixed depth by the layer count.
+         This also breaks what would otherwise be a circular definition:
+         LayerThickness needs the XY gap, the XY gap used to need the pitch, and
+         the pitch is now built from LayerThickness. -->
+    <constant name="SiTarget_XY_plane_gap_max"    value="SiTarget_layer_slack-2e-4*mm"/>
     <!-- The other end of the interval SiTarget_XY_plane_gap_frac interpolates
          over. Not 0: the XY gap is a slice of SiTarget.xml like any other and
          Geant4 aborts on a box of null extent, so "the two planes are touching"
@@ -187,10 +207,17 @@
          cost a third of the trials an optimizer put on the boundary — and the
          boundary is exactly where optimize_acqf likes to put them. -->
     <constant name="SiTarget_XY_plane_gap"        value="SiTarget_XY_plane_gap_max-(1-SiTarget_XY_plane_gap_frac)*(SiTarget_XY_plane_gap_max-SiTarget_XY_plane_gap_min)"/>
-    <!-- The honest sum of the slices in SiTarget.xml, not an alias for the pitch:
-         floor(dim_z/LayerThickness) has to count what the plugin actually stacks. -->
-    <constant name="SiTarget_LayerThickness"  value="SiTarget_WThickness+2*SiTarget_module_offset+2*SiTarget_sensor_thickness+SiTarget_XY_plane_gap+SiTarget_layer_gap"/>
-    <constant name="SiTarget_NLayers_max"     value="floor(SiTarget_dim_z/SiTarget_LayerThickness)"/>
+    <!-- What is left of the layer's air once the XY gap has taken its share.
+         The two always add up to SiTarget_layer_slack. -->
+    <constant name="SiTarget_layer_gap"       value="SiTarget_layer_slack-SiTarget_XY_plane_gap"/>
+    <constant name="SiTarget_LayerThickness"  value="SiTarget_WThickness+2*SiTarget_module_offset+2*SiTarget_sensor_thickness+SiTarget_layer_slack"/>
+    <!-- Depth and placement, defined here because DD4hep resolves constants in
+         document order and both need LayerThickness above. The SiTarget sits
+         immediately upstream of the SiPad, so the downstream face of the
+         silicon stays at z = -SiPad_dim_z whatever the layer count is: that
+         face is the reference the GENIE MC was generated against. -->
+    <constant name="SiTarget_dim_z"           value="SiTarget_NLayers*SiTarget_LayerThickness"/>
+    <constant name="SiTarget_z_position"      value="-SiTarget_dim_z/2.0-SiPad_dim_z-SiTarget_SiPad_gap"/>
     <!-- The W-to-W pitch, now an output rather than an input. Reported by
          config.py; nothing in SiTarget.xml reads it. -->
     <constant name="SiTarget_spacing"         value="SiTarget_LayerThickness"/>

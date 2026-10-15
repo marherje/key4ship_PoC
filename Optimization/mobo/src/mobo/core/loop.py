@@ -285,6 +285,8 @@ class AsyncLoop:
     def _tell(self, trial: Trial, result: Result) -> None:
         if result.status is TrialStatus.COMPLETED and result.metrics:
             self.optimizer.observe(trial.unit_x, result.metrics)
+        elif result.status is TrialStatus.INFEASIBLE:
+            self.optimizer.observe_infeasible(trial.unit_x)
         else:
             self.optimizer.observe_failure(trial.unit_x)
 
@@ -346,8 +348,14 @@ class AsyncLoop:
         return max(0, capacity - len(self._handles))
 
     def _n_started(self) -> int:
-        """Trials that exist, i.e. what counts against `max_trials`."""
-        return len(self.store)
+        """Trials that count against `max_trials`: everything but INFEASIBLE.
+
+        An infeasible proposal costs a geometry dry-run and nothing else, and
+        it is the optimizer's mistake rather than a use of the budget; the
+        campaign that ended with 146 of its 200 ids spent that way asked for
+        200 simulated geometries and got 30.
+        """
+        return len(self.store) - self.store.counts().get(TrialStatus.INFEASIBLE.value, 0)
 
     def _needs_baseline(self) -> bool:
         return self.cfg.baseline_first and len(self.store) == 0

@@ -18,6 +18,9 @@
 
 // ACTS
 #include "Acts/Definitions/Units.hpp"
+#include "Acts/Surfaces/BoundaryTolerance.hpp"
+#include "Acts/Surfaces/Surface.hpp"
+#include "Acts/Surfaces/SurfaceBounds.hpp"
 
 // SND geometry service
 #include "ISNDGeoSvc.h"
@@ -182,10 +185,51 @@ private:
       "Maximum |z_U − z_V| [mm] within a (station,layer) to allow pairing. "
       "Layers with separation > this fall back to 1D output."};
 
+  // A U/V pair is a GHOST when its two fibres were crossed by different
+  // particles: the reconstructed crossing then sits where no particle ever
+  // was. With N particles in a layer, AllPairs yields N^2 crossings of which
+  // N are real — the MTC counterpart of the SiTarget's StripX x StripY ghost
+  // problem that ACTSSequentialTracker's GhostResolveWindow addresses using
+  // SiPad points. Here the confirmer is the MTC's own scintillator plane
+  // (plane=2), which the reconstruction otherwise ignores entirely.
+  //
+  // Measured on 500 GENIE events: a particle lights a median of 2 scint cells,
+  // and in 53% of multi-particle layers two particles light COMPLETELY
+  // disjoint cell sets (median Jaccard overlap 0.00), so the scint does
+  // separate particles spatially — which is what makes this veto possible.
+  Gaudi::Property<std::string> m_scintCollection{
+      this, "ScintCollection", "",
+      "MTC scintillator hit collection used to confirm U/V crossings. Empty "
+      "(default) disables the ghost veto entirely, leaving every pipeline that "
+      "does not set it byte-for-byte unchanged."};
+  Gaudi::Property<double> m_scintConfirmWindow{
+      this, "ScintConfirmWindow", 0.0,
+      "Half-width [mm] of the window around a scintillator cell centre within "
+      "which a U/V crossing counts as confirmed. Cells are "
+      "MTC_ScintCellSize=50 mm wide and the crossing resolution is a few mm, "
+      "so ~30 mm covers the cell plus slack. A pair whose crossing lands in no "
+      "lit cell of its own layer is dropped as a ghost. 0.0 disables. "
+      "Fail-open by construction: a layer with NO scint hits confirms "
+      "everything, so scintillator inefficiency can never delete real hits."};
+
+  Gaudi::Property<double> m_acceptanceTolerance{
+      this, "AcceptanceTolerance", 2.0,
+      "A U/V crossing is kept only if it lies inside the combined surface's "
+      "bounds (the SciFi plane, +-300 mm) plus this margin [mm]. AllPairs "
+      "crosses every U with every V of a layer; two fibres far apart in x "
+      "intersect at |y| = |dx| / (2 tan 5 deg), i.e. a 300 mm separation "
+      "'lands' at |y| = 1.7 m, well outside any physical plane. Those points "
+      "are pure ghosts, cost seeds and can be drawn outside the detector. "
+      "Negative disables the check."};
+
   // ---- DataHandles ----
   mutable std::unique_ptr<
       k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>
       m_inputHandle;
+
+  mutable std::unique_ptr<
+      k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>
+      m_scintHandle;
 
   mutable std::unique_ptr<
       k4FWCore::DataHandle<edm4hep::TrackerHit3DCollection>>
@@ -216,6 +260,25 @@ StatusCode MTCSciFiMeasConverter::initialize() {
     m_outputHandle = std::make_unique<
         k4FWCore::DataHandle<edm4hep::TrackerHit3DCollection>>(
         m_outputCollection.value(), Gaudi::DataHandle::Writer, this);
+
+    const bool ghostVeto =
+        !m_scintCollection.value().empty() && m_scintConfirmWindow.value() > 0.0;
+    if (ghostVeto) {
+      m_scintHandle = std::make_unique<
+          k4FWCore::DataHandle<edm4hep::SimCalorimeterHitCollection>>(
+          m_scintCollection.value(), Gaudi::DataHandle::Reader, this);
+      info() << "[MTCSciFiMeasConverter] U/V ghost veto ON: confirming "
+             << "crossings against '" << m_scintCollection.value()
+             << "' within " << m_scintConfirmWindow.value() << " mm." << endmsg;
+    } else if (!m_scintCollection.value().empty() ||
+               m_scintConfirmWindow.value() > 0.0) {
+      // Half-configured is a silent no-op otherwise, and the symptom (ghosts
+      // still there) looks identical to the veto not working.
+      warning() << "[MTCSciFiMeasConverter] U/V ghost veto INACTIVE: it needs "
+                << "BOTH ScintCollection (now '" << m_scintCollection.value()
+                << "') and ScintConfirmWindow > 0 (now "
+                << m_scintConfirmWindow.value() << ")." << endmsg;
+    }
 
     m_decoder = std::make_unique<dd4hep::DDSegmentation::BitFieldCoder>(
         m_bitField.value());
@@ -261,7 +324,7 @@ StatusCode MTCSciFiMeasConverter::execute(const EventContext&) const {
     const double pitch     = m_stripPitch.value();     // mm
     const double alpha_rad = m_stereoAngleDeg.value() * M_PI / 180.0;
     const double cos_a     = std::cos(alpha_rad);
-    const double sin_a     = std::sin(alpha_rad);
+    const double tan_a     = std::tan(alpha_rad);
 
     // 1D loc0 variance: eBoundLoc0 = cos(α)·x_stereo → σ² scales with cos²α.
     const double var1D = cos_a * cos_a * (pitch * pitch) / 12.0;       // mm²
@@ -272,8 +335,8 @@ StatusCode MTCSciFiMeasConverter::execute(const EventContext&) const {
     // ⇒ X_g = (s_U + s_V)/(2 cos α);  Y_g = (s_V − s_U)/(2 sin α).
     //   σ²(X_g) = pitch²/(24 cos²α),  σ²(Y_g) = pitch²/(24 sin²α).
     //   Off-diagonal = (σ²(s_U) − σ²(s_V)) / (4 sin α cos α) = 0 since σ_U = σ_V.
-    const double var2D_x = (pitch * pitch) / (24.0 * cos_a * cos_a);
-    const double var2D_y = (pitch * pitch) / (24.0 * sin_a * sin_a);
+    const double var2D_x = (pitch * pitch) / 24.0;
+    const double var2D_y = (pitch * pitch) / (24.0 * tan_a * tan_a);
 
     // ---- Decode hits, skip scintillator -----------------------------------
     std::vector<DecodedHit> decoded;
@@ -302,12 +365,32 @@ StatusCode MTCSciFiMeasConverter::execute(const EventContext&) const {
       decoded.push_back(d);
     }
 
+    // ---- Scintillator confirmation map ------------------------------------
+    // (station, layer) -> transverse centres of the lit scint cells. Built once
+    // per event; empty when the veto is off, which short-circuits every check
+    // below and leaves the output identical to before.
+    std::map<std::pair<int, int>, std::vector<std::pair<double, double>>> scintCells;
+    const double scintWin =
+        m_scintHandle ? m_scintConfirmWindow.value() : 0.0;
+    if (m_scintHandle) {
+      const auto* scintHits = m_scintHandle->get();
+      if (scintHits) {
+        for (const auto& sh : *scintHits) {
+          const uint64_t scid = sh.getCellID();
+          const int st = static_cast<int>(m_decoder->get(scid, "station"));
+          const int ly = static_cast<int>(m_decoder->get(scid, "layer"));
+          const auto& sp = sh.getPosition();
+          scintCells[{st, ly}].emplace_back(sp.x, sp.y);
+        }
+      }
+    }
+
     // ---- Apply preselection strategy --------------------------------------
     const auto groups =
         groupHits(decoded, m_pairMethod.value(), m_pairMaxDz.value());
 
     // ---- Emit output ------------------------------------------------------
-    std::size_t n1D = 0, n2D = 0, nSkipped = 0;
+    std::size_t n1D = 0, n2D = 0, nSkipped = 0, nGhostVetoed = 0, nOutside = 0;
     for (const auto& group : groups) {
       if (group.size() == 1) {
         const auto& d = decoded[group[0]];
@@ -351,11 +434,42 @@ StatusCode MTCSciFiMeasConverter::execute(const EventContext&) const {
           ++nSkipped;
           continue;
         }
-        // Canonical stereo convention: s_U = cosα·X − sinα·Y, s_V = cosα·X + sinα·Y.
-        // ⇒ X = (s_U + s_V)/(2 cos α);  Y = (s_V − s_U)/(2 sin α).
-        const double X_g = (dU.s_raw + dV.s_raw) / (2.0 * cos_a);
-        const double Y_g = (dV.s_raw - dU.s_raw) / (2.0 * sin_a);
+        // s_raw is what CartesianStripXStereo::position() returns: the strip
+        // centre at y = 0, i.e. x − y·tanα for U (+α) and x + y·tanα for V (−α).
+        // The stereo coordinate proper is s = cosα·s_raw, so inverting in
+        // s_raw directly: X = (s_U + s_V)/2,  Y = (s_V − s_U)/(2 tan α).
+        // (Dividing by 2cosα / 2sinα, as before, scaled both by 1/cosα —
+        // a 0.4% bias, 1 mm at the acceptance edge, larger than the pitch.)
+        const double X_g = 0.5 * (dU.s_raw + dV.s_raw);
+        const double Y_g = (dV.s_raw - dU.s_raw) / (2.0 * tan_a);
         const double zMid = 0.5 * (dU.z + dV.z);
+
+        // Acceptance: the crossing must sit on the plane it claims to be on.
+        // Surface frame is loc0 = -X, loc1 = +Y (see SeqCalibrator's header).
+        if (m_acceptanceTolerance.value() >= 0.0 &&
+            !surf->bounds().inside(
+                Acts::Vector2(-X_g, Y_g),
+                Acts::BoundaryTolerance::AbsoluteEuclidean(
+                    m_acceptanceTolerance.value()))) {
+          ++nOutside;
+          continue;
+        }
+
+        // Ghost veto: the crossing must land on a lit scintillator cell of its
+        // OWN layer. Fail-open — a layer whose scintillator recorded nothing
+        // confirms everything, so an inefficient or absent scint plane can
+        // never remove a real hit, it only stops vetoing.
+        if (scintWin > 0.0) {
+          auto itCells = scintCells.find({dU.station, dU.layer});
+          if (itCells != scintCells.end() && !itCells->second.empty()) {
+            bool confirmed = false;
+            for (const auto& [cx, cy] : itCells->second) {
+              if (std::abs(X_g - cx) <= scintWin &&
+                  std::abs(Y_g - cy) <= scintWin) { confirmed = true; break; }
+            }
+            if (!confirmed) { ++nGhostVetoed; continue; }
+          }
+        }
         edm4hep::CovMatrix3f cov{};
         cov[0] = static_cast<float>(var2D_x);   // xx
         cov[3] = static_cast<float>(var2D_y);   // yy
@@ -378,6 +492,8 @@ StatusCode MTCSciFiMeasConverter::execute(const EventContext&) const {
             << " emitted 1D=" << n1D
             << " 2D=" << n2D
             << " scintSkipped=" << nScint
+            << " ghostVetoed=" << nGhostVetoed
+            << " outsideAcceptance=" << nOutside
             << " noSurface=" << nSkipped << endmsg;
 
     return StatusCode::SUCCESS;

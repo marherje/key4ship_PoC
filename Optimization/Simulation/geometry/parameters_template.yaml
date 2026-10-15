@@ -36,22 +36,23 @@
 name: baseline           # -> variants/baseline.xml
 
 constants:
-  SiPad_WThickness:        10      # tungsten absorber per layer
-  SiPad_layer_gap:       auto      # closes the layer: chip -> W of the next one;
-                                   # `auto` -> equidistant layers
-  SiPad_frame_gap:        0.1      # W -> carbon frame, essentially flush
-  SiPad_dim_z:            220      # total SiPad envelope along z
-  SiPad_NLayers:           10      # <= SiPad_NLayers_max
+  # BASELINE = the committed simulation/geometry/SND_compact.xml, which is also
+  # the geometry the GENIE events were generated on. Rendering this file must
+  # reproduce it: SiTarget 120 layers spanning z = -1690..-370 mm, SiPad 22
+  # layers spanning -370..0 mm.
+  #
+  # Note what is NOT here any more: SiPad_dim_z and SiTarget_layer_gap. A
+  # detector's depth is now derived from its layers, so the depth is an output
+  # and the layer spacing is the input, not the other way round.
+  SiTarget_NLayers: 120
+  SiTarget_WThickness: 3.5
+  SiTarget_module_offset: 1
+  SiTarget_layer_slack: 4.9        # 11.00 pitch - 6.10 rigid content
+  SiTarget_XY_plane_gap_frac: 1
+  SiTarget_SiPad_gap: 0.002        # 2*env_safety; 0 makes the envelopes overlap
 
-  SiTarget_WThickness:      3.5
-  SiTarget_module_offset:   1      # from W to the Si planes
-  SiTarget_layer_gap:    auto      # closes the layer: Y plane -> W of the next one;
-                                   # `auto` -> equidistant layers. Replaces the old
-                                   # SiTarget_spacing input, which was the same
-                                   # quantity read the other way round.
-  SiTarget_XY_plane_gap_frac: 1    # where the Y plane sits in the air the pitch
-                                   # leaves over: 0 = against the X plane,
-                                   # 1 = against the W of the next layer.
-                                   # Dimensionless; the mm are derived and
-                                   # reported by config.py.
-  SiTarget_NLayers:       120      # <= SiTarget_NLayers_max
+  SiPad_NLayers: 22
+  SiPad_WThickness: 10
+  SiPad_layer_gap: 1.0
+  SiPad_frame_gap: 0.1
+  SiPad_env_slack: 5.9        # 370.0 envelope - 22 x 16.55 layers
