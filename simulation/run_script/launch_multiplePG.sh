@@ -54,7 +54,7 @@ pairs=(
 )
 # ==============================================================
 
-mkdir -p steer data log
+mkdir -p steer log
 
 # This script always simulates the committed baseline geometry
 # (simulation/geometry/SND_compact.xml). Geometry variants are generated and
@@ -62,7 +62,12 @@ mkdir -p steer data log
 
 local=$PWD
 steer_path="${local}/steer"
-data_path="${local}/data"
+# Simulation outputs (HepMC, edm4hep, GENIE gst/ghep) go to EOS: they do not
+# fit in the 10 GB AFS quota. ./data is a symlink to the same place, which is
+# what the gaudi_jobs pipelines read through. The condor submit files stay on
+# AFS, since the schedd refuses /eos paths inside them.
+data_path=${KEY4SHIP_DATA_DIR:-/eos/experiment/ship/user/marquezh/key4ship_PoC_data}
+mkdir -p "${data_path}"
 
 for pair in "${pairs[@]}"; do
     IFS=: read -r p1 e1 p2 e2 zvtx <<< "${pair}"

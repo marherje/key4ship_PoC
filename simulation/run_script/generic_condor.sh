@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Crear directorios si no existen
-mkdir -p steer data log macros
+mkdir -p steer log macros
 
 # inputs
 nevents=$1
@@ -17,7 +17,12 @@ dir_z=$9
 # Paths
 local=$PWD
 geometry_folder="${local}/../geometry"
-data_path="${local}/data"
+# Simulation outputs (HepMC, edm4hep, GENIE gst/ghep) go to EOS: they do not
+# fit in the 10 GB AFS quota. ./data is a symlink to the same place, which is
+# what the gaudi_jobs pipelines read through. The condor submit files stay on
+# AFS, since the schedd refuses /eos paths inside them.
+data_path=${KEY4SHIP_DATA_DIR:-/eos/experiment/ship/user/marquezh/key4ship_PoC_data}
+mkdir -p "${data_path}"
 steer_path="${local}/steer"
 log_path="${local}/log"
 

@@ -62,16 +62,34 @@ zshift_m=-25.76
 # in the .status file). run numbers the output files and must be unique per
 # sample. seed defaults to run.
 samples=(
-    "gen_test_1000:1000:1"
+    # Already produced (2026-09-17); listing it again would re-run its ddsim
+    # and overwrite the output, so it stays commented out.
+    # "gen_test_1000:1000:1"
+    # SND-PFA reference sample (docs/snd_pfa_plan.md): four independent runs
+    # of 2000 interactions, generated with the FairShip-frame GDML and the
+    # zshift_m correction below, i.e. with the flux geometry FIXED. They
+    # replace output_genie_allflavours_0_2000.edm4hep.root, whose neutrino
+    # cone has its waist at z ~ 0 instead of 25.76 m upstream (measured
+    # 2026-09-22: transverse RMS 44 mm at z ~ 0 growing to 105 mm at z = 2.7 m,
+    # where a correctly placed source varies by ~15 % across the detector).
+    "pfa_ref_a:2000:11"
+    "pfa_ref_b:2000:12"
+    "pfa_ref_c:2000:13"
+    "pfa_ref_d:2000:14"
 )
 # ==============================================================
 
-mkdir -p steer data log data/genie
+mkdir -p steer log
 
 local=$PWD
 repo=$(cd "${local}/../.." && pwd)
 steer_path="${local}/steer"
-data_path="${local}/data"
+# Simulation outputs (HepMC, edm4hep, GENIE gst/ghep) go to EOS: they do not
+# fit in the 10 GB AFS quota. ./data is a symlink to the same place, which is
+# what the gaudi_jobs pipelines read through. The condor submit files stay on
+# AFS, since the schedd refuses /eos paths inside them.
+data_path=${KEY4SHIP_DATA_DIR:-/eos/experiment/ship/user/marquezh/key4ship_PoC_data}
+mkdir -p "${data_path}"
 log_path="${local}/log"
 
 for f in "${gdml}" "${run_gevgen}"; do
