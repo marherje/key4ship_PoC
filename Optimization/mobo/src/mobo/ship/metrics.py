@@ -258,3 +258,122 @@ def hit_metrics(path: str, containers: dict[str, str] | None = None) -> dict[str
     if seen:
         metrics["n_events_seen"] = float(max(seen) + 1)
     return metrics
+
+
+# ── the SND-PFA (phase 5.2) ──────────────────────────────────────────────────
+
+# EventPFA columns pfa_metrics needs, by RNTuple type.
+_PFA_INT_COLS = ("flavour_true", "is_cc", "n_muon_cand", "muon_matched")
+_PFA_FLOAT_COLS = (
+    "E_nu_true", "E_had_true", "p_mu_true", "p_mu_reco",
+    "E_had_reco", "E_had_reco_mtc", "E_nu_reco",
+)
+
+
+def _median(xs: list[float]) -> float:
+    if not xs:
+        return math.nan
+    s = sorted(xs)
+    n = len(s)
+    return s[n // 2] if n % 2 else 0.5 * (s[n // 2 - 1] + s[n // 2])
+
+
+def _sigma68(xs: list[float]) -> float:
+    """Half the 16-84 % spread: the resolution, blind to the tails."""
+    if len(xs) < 3:
+        return math.nan
+    s = sorted(xs)
+    return 0.5 * (s[int(0.84 * (len(s) - 1))] - s[int(0.16 * (len(s) - 1))])
+
+
+def read_columns(
+    path: str, container: str, ints: tuple[str, ...], floats: tuple[str, ...]
+) -> dict[str, list[float]]:
+    """Whole columns of one RNTuple, through GetView (see distinct_events)."""
+    import gc
+
+    import ROOT
+
+    reader = ROOT.RNTupleReader.Open(container, path)
+    cols: dict[str, list[float]] = {}
+    for kind, names in (("std::int32_t", ints), ("float", floats)):
+        for name in names:
+            view = reader.GetView[kind](name)
+            cols[name] = [float(view(i)) for i in reader.GetEntryRange()]
+            del view
+    del reader
+    gc.collect()
+    return cols
+
+
+def pfa_metrics_from_columns(c: dict[str, list[float]]) -> dict[str, float]:
+    """The PFA metrics of one trial, from the EventPFA columns.
+
+    Split from the reading so the definitions can be tested on rows written by
+    hand. They are those of the phase-3.3 / 4.2 validation scripts
+    (Optimization/Analysis/pfa/muon_perf.py, enu_perf.py):
+
+      eff_muon_id   nu_mu CC whose primary muon a MuonCandidate is / nu_mu CC
+      fake_muon_nc  NC with any MuonCandidate / NC (fake_muon_nue: nu_e CC)
+      res_pmu       sigma68 of (p_reco - p_true) / p_true, muon found
+      bias_ehad     median E_had,reco / E_had,true - 1, nu_mu CC + NC with
+                    E_had,true > 50 MeV; res_ehad its sigma68
+      res_enu       sigma68 of E_nu,reco / E_nu,true on nu_mu CC (bias_enu
+                    its median - 1: the plan's 10 % criterion)
+      frac_leak_mtc events of that E_had sample with more than 30 % of the
+                    reconstructed E_had in the MTC
+      nevents_pfa   EventPFA rows
+    """
+    n = len(c["is_cc"])
+    numu = [i for i in range(n)
+            if c["is_cc"][i] == 1 and abs(c["flavour_true"][i]) == 14]
+    nue = [i for i in range(n)
+           if c["is_cc"][i] == 1 and abs(c["flavour_true"][i]) == 12]
+    nc = [i for i in range(n) if c["is_cc"][i] == 0]
+
+    m: dict[str, float] = {"nevents_pfa": float(n)}
+    if numu:
+        m["eff_muon_id"] = sum(c["muon_matched"][i] for i in numu) / len(numu)
+    if nc:
+        m["fake_muon_nc"] = sum(1 for i in nc if c["n_muon_cand"][i] > 0) / len(nc)
+    if nue:
+        m["fake_muon_nue"] = sum(1 for i in nue if c["n_muon_cand"][i] > 0) / len(nue)
+
+    dp = [(c["p_mu_reco"][i] - c["p_mu_true"][i]) / c["p_mu_true"][i]
+          for i in numu
+          if c["muon_matched"][i] == 1 and c["p_mu_true"][i] > 0
+          and c["p_mu_reco"][i] > 0]
+    m["res_pmu"] = _sigma68(dp)
+
+    had = [i for i in numu + nc if c["E_had_true"][i] > 0.05]
+    r_had = [c["E_had_reco"][i] / c["E_had_true"][i] for i in had]
+    m["bias_ehad"] = _median(r_had) - 1.0
+    m["res_ehad"] = _sigma68(r_had)
+    leak = [i for i in had if c["E_had_reco"][i] > 0]
+    m["frac_leak_mtc"] = (
+        sum(1 for i in leak if c["E_had_reco_mtc"][i] / c["E_had_reco"][i] > 0.3)
+        / len(leak) if leak else math.nan)
+
+    r_nu = [c["E_nu_reco"][i] / c["E_nu_true"][i]
+            for i in numu if c["E_nu_true"][i] > 0]
+    m["bias_enu"] = _median(r_nu) - 1.0
+    m["res_enu"] = _sigma68(r_nu)
+    return m
+
+
+def pfa_metrics(path: str) -> dict[str, float]:
+    """PFA metrics from a ShipPFA.root (job7_pfa_rntuple.py).
+
+    An absent file or RNTuple returns {} rather than raising, as track_metrics
+    does: a chain without the PFA simply has no PFA metrics. The payload checks
+    that an objective it needs is present.
+    """
+    import os
+
+    if not os.path.isfile(path):
+        return {}
+    try:
+        cols = read_columns(path, "EventPFA", _PFA_INT_COLS, _PFA_FLOAT_COLS)
+    except Exception:  # noqa: BLE001 - an absent RNTuple is not an error here
+        return {}
+    return pfa_metrics_from_columns(cols)

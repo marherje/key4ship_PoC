@@ -190,3 +190,14 @@ Converts EDM4HEP collections to a ROOT RNTuple (`ShipHits.root`) for analysis.
 2. Add `.cpp` to `gaudi_add_module(SND_reco SOURCES ...)` in `CMakeLists.txt`
 3. `/build` to rebuild
 4. Import in Python: `from Configurables import MyAlgorithm`
+
+---
+
+## Particle flow (SND-PFA)
+
+Particle-flow reconstruction over SiTarget + SiPad + MTC: jobs 6 (`job6_pfa.py`, hits →
+clusters → muon → PFOs) and 7 (`job7_pfa_rntuple.py`, the flat `ShipPFA.root`) of the
+GENIE chain, both run by `genie_pipeline_seq.sh`. Final results and defaults:
+[`docs/informe_pfa_2026-10-15.md`](informe_pfa_2026-10-15.md); the implementation plan
+is [`docs/snd_pfa_plan.md`](snd_pfa_plan.md) and the step-by-step record
+[`docs/snd_pfa_progress.md`](snd_pfa_progress.md).

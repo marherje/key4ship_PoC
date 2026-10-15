@@ -70,5 +70,35 @@ target_include_directories(SND_reco PRIVATE
     /cvmfs/sw.hsf.org/key4hep/releases/2026-02-01/x86_64-almalinux9-gcc14.2.0-opt/acts/44.3.0-37xe73/include
 )
 
+# ── SND-PFA ──────────────────────────────────────────────────────────────────
+# Particle flow over SiTarget + SiPad + MTC (docs/snd_pfa_plan.md). Its own
+# component library, so a PFA stage can be rebuilt without relinking the
+# tracking module, and so the two stay independent.
+gaudi_add_module(SND_pfa
+  SOURCES
+    gaudi_source/pfa/SNDCaloHitBuilder.cpp
+    gaudi_source/pfa/SNDLayerClusterer.cpp
+    gaudi_source/pfa/SNDTruthClusterer.cpp
+    gaudi_source/pfa/SNDMuonFinder.cpp
+    gaudi_source/pfa/SNDHadronicClusterer.cpp
+    gaudi_source/pfa/SNDPFOBuilder.cpp
+    gaudi_source/pfa/PFASummaryWriter.cpp
+  LINK
+    Gaudi::GaudiKernel
+    k4FWCore::k4FWCore
+    EDM4HEP::edm4hep
+    podio::podioRootIO
+    DD4hep::DDCore
+    DD4hep::DDRec
+    ROOT::ROOTNTuple
+)
+
+set_target_properties(SND_pfa PROPERTIES
+    INSTALL_RPATH_USE_LINK_PATH TRUE
+    BUILD_RPATH_USE_ORIGIN      TRUE
+)
+target_include_directories(SND_pfa PRIVATE gaudi_source/pfa)
+
 install(TARGETS SiPadDetector_plugin SiTargetDetector_plugin MTCDetector_plugin SND_SciFiAction_plugin LIBRARY DESTINATION lib)
 install(TARGETS SND_reco LIBRARY DESTINATION lib)
+install(TARGETS SND_pfa LIBRARY DESTINATION lib)

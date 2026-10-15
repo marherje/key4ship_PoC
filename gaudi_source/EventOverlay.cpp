@@ -2,6 +2,7 @@
 #include "GaudiKernel/MsgStream.h"
 #include "edm4hep/SimCalorimeterHitCollection.h"
 #include "edm4hep/CaloHitContributionCollection.h"
+#include "edm4hep/MCParticleCollection.h"
 #include "podio/ROOTReader.h"
 #include "podio/ROOTWriter.h"
 #include "podio/Frame.h"
@@ -22,6 +23,14 @@
 // the raw simulation times. The output uses the same collection names
 // (*Windowed) and frame parameters (SiTargetSourceIDs, *ContribPDGs,
 // t_window_start) as EventWindowSplitter, so job3/job4/job5 run unchanged.
+//
+// It also copies every source's MCParticles into a single output MCParticles
+// collection (WriteMCParticles, default true) and records where each source
+// starts in it as the frame parameter MCParticleSourceOffsets. That is what
+// makes *ContribParticleIDs usable downstream: the index stored there is local
+// to its own source, so the particle a contribution came from is
+// MCParticles[ContribParticleIDs[k] + MCParticleSourceOffsets[source_index]].
+// Parent/daughter relations are preserved, remapped through the same offsets.
 // ---------------------------------------------------------------------------
 
 class EventOverlay : public Gaudi::Algorithm {
@@ -80,6 +89,17 @@ public:
       const auto& colsMTC = m_collsMTC.value();
       const int   planeOff = m_mtcPlaneOffset.value();
 
+      // MCParticle collection name per source; empty property => "MCParticles"
+      // everywhere, which is what ddsim writes.
+      std::vector<std::string> colsMC = m_collsMCParticles.value();
+      if (colsMC.empty()) colsMC.assign(files.size(), "MCParticles");
+      if (m_writeMCParticles.value() && colsMC.size() != files.size()) {
+        error() << "[EventOverlay] CollectionsMCParticles has " << colsMC.size()
+                << " entries but there are " << files.size() << " sources."
+                << endmsg;
+        return StatusCode::FAILURE;
+      }
+
       // Open all sources and determine the number of overlaid events.
       std::vector<std::unique_ptr<podio::ROOTReader>> readers;
       size_t nEventsCommon = std::numeric_limits<size_t>::max();
@@ -125,10 +145,58 @@ public:
         std::map<uint64_t, std::vector<ContribData>> bufSiPad;
         std::map<uint64_t, std::vector<ContribData>> bufMTCSciFi;
         std::map<uint64_t, std::vector<ContribData>> bufMTCScint;
+        // Merged MCParticles of this event and the index at which each source
+        // starts in them (parallel to InputFiles/SourceIDs).
+        std::vector<MCData> bufMC;
+        std::vector<int>    mcOffsets;
+        std::vector<int>    mcSourceIDs;
 
         for (size_t i = 0; i < files.size(); ++i) {
           auto frame = podio::Frame(readers[i]->readEntry("events", ev));
           const int sourceID = ids[i];
+
+          if (m_writeMCParticles.value()) {
+            const int base = static_cast<int>(bufMC.size());
+            mcOffsets.push_back(base);
+            mcSourceIDs.push_back(sourceID);
+            // Frame::get<T>() throws when the collection is absent, so go
+            // through the CollectionBase overload, which returns nullptr.
+            const auto* mcColl = dynamic_cast<const edm4hep::MCParticleCollection*>(
+                frame.get(colsMC[i]));
+            if (!mcColl) {
+              if (ev == 0)
+                warning() << "[EventOverlay] Source source_id=" << sourceID
+                          << " has no collection '" << colsMC[i]
+                          << "'; its contributions cannot be resolved to an "
+                             "MCParticle." << endmsg;
+            } else {
+              for (const auto& mcp : *mcColl) {
+                MCData m;
+                m.pdg       = mcp.getPDG();
+                m.genStatus = mcp.getGeneratorStatus();
+                m.simStatus = mcp.getSimulatorStatus();
+                m.charge    = mcp.getCharge();
+                m.time      = mcp.getTime();
+                m.mass      = mcp.getMass();
+                const auto& v  = mcp.getVertex();
+                const auto& e  = mcp.getEndpoint();
+                const auto& pm = mcp.getMomentum();
+                const auto& pe = mcp.getMomentumAtEndpoint();
+                m.vx = v.x;  m.vy = v.y;  m.vz = v.z;
+                m.ex = e.x;  m.ey = e.y;  m.ez = e.z;
+                m.px = pm.x; m.py = pm.y; m.pz = pm.z;
+                m.epx = pe.x; m.epy = pe.y; m.epz = pe.z;
+                m.helicity = mcp.getHelicity();
+                // Relations are stored by index; the source's own indices are
+                // shifted by `base` so they address the merged collection.
+                for (const auto& par : mcp.getParents())
+                  m.parents.push_back(base + par.getObjectID().index);
+                for (const auto& dau : mcp.getDaughters())
+                  m.daughters.push_back(base + dau.getObjectID().index);
+                bufMC.push_back(std::move(m));
+              }
+            }
+          }
 
           const auto& hitsTarget =
               frame.get<edm4hep::SimCalorimeterHitCollection>(colsT[i]);
@@ -243,6 +311,36 @@ public:
         auto [outMTCScint, outMTCScintContribs, srcMTCScint, pdgMTCScint,
               partMTCScint] = buildColl(bufMTCScint);
 
+        // Merged MCParticles: create every particle first, then wire the
+        // relations, so an index can point forward as well as backward.
+        edm4hep::MCParticleCollection outMC;
+        if (m_writeMCParticles.value()) {
+          std::vector<edm4hep::MutableMCParticle> created;
+          created.reserve(bufMC.size());
+          for (const auto& m : bufMC) {
+            auto p = outMC.create();
+            p.setPDG(m.pdg);
+            p.setGeneratorStatus(m.genStatus);
+            p.setSimulatorStatus(m.simStatus);
+            p.setCharge(m.charge);
+            p.setTime(m.time);
+            p.setMass(m.mass);
+            p.setVertex({m.vx, m.vy, m.vz});
+            p.setEndpoint({m.ex, m.ey, m.ez});
+            p.setMomentum({m.px, m.py, m.pz});
+            p.setMomentumAtEndpoint({m.epx, m.epy, m.epz});
+            p.setHelicity(m.helicity);
+            created.push_back(p);
+          }
+          const int nMC = static_cast<int>(created.size());
+          for (int k = 0; k < nMC; ++k) {
+            for (int ip : bufMC[k].parents)
+              if (ip >= 0 && ip < nMC) created[k].addToParents(created[ip]);
+            for (int id : bufMC[k].daughters)
+              if (id >= 0 && id < nMC) created[k].addToDaughters(created[id]);
+          }
+        }
+
         podio::Frame outFrame;
         outFrame.put(std::move(outSiTarget),         m_outTargetName.value());
         outFrame.put(std::move(outSiTargetContribs), m_outTargetName.value() + "_Contributions");
@@ -268,6 +366,17 @@ public:
         outFrame.putParameter("SiPadContribParticleIDs",    partSiPad);
         outFrame.putParameter("MTCSciFiContribParticleIDs", partMTCSciFi);
         outFrame.putParameter("MTCScintContribParticleIDs", partMTCScint);
+        if (m_writeMCParticles.value()) {
+          outFrame.put(std::move(outMC), m_outMCName.value());
+          // Index at which each source's particles start in MCParticles, in
+          // the order of InputFiles/SourceIDs. Together with
+          // *ContribParticleIDs (which is source-local) this identifies the
+          // particle behind every contribution.
+          outFrame.putParameter("MCParticleSourceOffsets", mcOffsets);
+          // Source id of each offset above, so a contribution (whose source id
+          // is stored in CaloHitContribution::PDG) can pick its own offset.
+          outFrame.putParameter("MCParticleSourceIDs", mcSourceIDs);
+        }
         outFrame.putParameter("t_window_start", 0.0f);
 
         writer.writeFrame(outFrame, "events");
@@ -305,6 +414,25 @@ private:
     float hitX, hitY, hitZ;
   };
 
+  // One source MCParticle, flattened so it outlives the podio::Frame it was
+  // read from. Parent/daughter indices are already offset into the merged
+  // output collection.
+  struct MCData {
+    int    pdg = 0;
+    int    genStatus = 0;
+    int    simStatus = 0;
+    float  charge = 0.f;
+    float  time = 0.f;
+    double mass = 0.0;
+    double vx = 0, vy = 0, vz = 0;
+    double ex = 0, ey = 0, ez = 0;
+    double px = 0, py = 0, pz = 0;
+    double epx = 0, epy = 0, epz = 0;
+    int    helicity = 0;
+    std::vector<int> parents;    // indices into the merged collection
+    std::vector<int> daughters;  // indices into the merged collection
+  };
+
   Gaudi::Property<std::vector<std::string>> m_inputFiles{
       this, "InputFiles", {}, "List of input edm4hep ROOT files (one per source)"};
   Gaudi::Property<std::vector<int>> m_sourceIDs{
@@ -331,6 +459,17 @@ private:
   Gaudi::Property<int> m_maxEventsPerSource{
       this, "MaxEventsPerSource", 0,
       "Maximum number of events to overlay (0 = all common events)"};
+  Gaudi::Property<bool> m_writeMCParticles{
+      this, "WriteMCParticles", true,
+      "Copy every source's MCParticles into the output frame and write the "
+      "MCParticleSourceOffsets parameter"};
+  Gaudi::Property<std::vector<std::string>> m_collsMCParticles{
+      this, "CollectionsMCParticles", {},
+      "MCParticle collection name for each input file (empty = 'MCParticles' "
+      "for all sources)"};
+  Gaudi::Property<std::string> m_outMCName{
+      this, "OutputCollectionMCParticles", "MCParticles",
+      "Output MCParticle collection name"};
 };
 
 DECLARE_COMPONENT(EventOverlay)

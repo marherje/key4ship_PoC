@@ -67,6 +67,12 @@ class EvaluatorConfig:
     # eff_track. Off by default: job5_rntuple.py writes no track container
     # under that name, and a missing one must not look like a bad geometry.
     track_metrics: bool = False
+    # When true the chain is extended with the SND-PFA (job6_pfa, then
+    # job7_pfa_rntuple, after the jobs above) and the payload reports the
+    # pfa_metrics of its ShipPFA.root: muon ID efficiency and fakes, p_mu,
+    # E_had and E_nu resolution. Off by default: it adds a few seconds per
+    # 100 events and a chain without it must not look like a bad geometry.
+    pfa_metrics: bool = False
     # Keep a trial's ROOT files after its metrics are computed. False by
     # default: they are ~37 MB per trial and pure intermediate state.
     keep_intermediate: bool = False
@@ -209,6 +215,7 @@ class SNDEvaluator(Evaluator):
                     "hits_file": self.cfg.hits_file or HITS_FILE,
                     "jobs": list(self.cfg.jobs or JOBS),
                     "track_metrics": bool(self.cfg.track_metrics),
+                    "pfa_metrics": bool(self.cfg.pfa_metrics),
                     "keep_intermediate": bool(self.cfg.keep_intermediate),
                     "genie": self.genie,
                     "analysis_dir": str(self.analysis_dir),

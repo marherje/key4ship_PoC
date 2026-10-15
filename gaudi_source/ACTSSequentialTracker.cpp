@@ -128,13 +128,20 @@ struct SeqMeasurement {
   // cellID onto their output, so it is a stable key into the *HitsWindowed
   // collections and their parallel *ContribParticleIDs frame parameter.
   uint64_t             cellID      = 0;
+  // Index of the TrackerHit3D this came from, inside its own input
+  // collection (SiTarget/SiPad/MTC, i.e. `detectorID` picks the collection).
+  // It is what lets a written Track point back at its hits, which is how any
+  // consumer -- MC-truth studies, SND-PFA's muon corridor -- finds out which
+  // particle built a track. -1 when unknown.
+  int                  srcIndex    = -1;
 
   SeqMeasurement(const Acts::Surface* sf, double lc, double lc2,
                  double var, double var2, bool twod, int detID, int pl,
-                 float t, float e, uint64_t cid)
+                 float t, float e, uint64_t cid, int srcIdx = -1)
       : surface(sf), localCoord(lc), localCoord2(lc2),
         variance(var), variance2(var2), is2D(twod),
-        detectorID(detID), plane(pl), time(t), eDep(e), cellID(cid) {}
+        detectorID(detID), plane(pl), time(t), eDep(e), cellID(cid),
+        srcIndex(srcIdx) {}
 };
 
 struct SeqSourceLink {
@@ -1554,7 +1561,8 @@ StatusCode ACTSSequentialTracker::execute(const EventContext&) const {
         const double localCoord = (plane == 0) ? pos.x : pos.y;
         const double var        = (plane == 0) ? cov[0] : cov[3];
         measurements.emplace_back(surf, localCoord, 0.0, var, 0.0, false, 0, plane,
-                                  hit.getTime(), hit.getEDep(), cellID);
+                                  hit.getTime(), hit.getEDep(), cellID,
+                                  static_cast<int>(i));
       }
     }
 
@@ -1574,7 +1582,8 @@ StatusCode ACTSSequentialTracker::execute(const EventContext&) const {
           continue;
         }
         measurements.emplace_back(surf, pos.x, pos.y, cov[0], cov[3], true, 1, -1,
-                                  hit.getTime(), hit.getEDep(), cellID);
+                                  hit.getTime(), hit.getEDep(), cellID,
+                                  static_cast<int>(i));
       }
     }
 
@@ -1601,7 +1610,8 @@ StatusCode ACTSSequentialTracker::execute(const EventContext&) const {
         const bool is2D = (plane == 3);
         measurements.emplace_back(surf, pos.x, is2D ? pos.y : 0.0,
                                   cov[0], is2D ? cov[3] : 0.0, is2D, 2, plane,
-                                  hit.getTime(), hit.getEDep(), cellID);
+                                  hit.getTime(), hit.getEDep(), cellID,
+                                  static_cast<int>(i));
       }
     }
 
@@ -3076,6 +3086,17 @@ StatusCode ACTSSequentialTracker::execute(const EventContext&) const {
     //   state[1..N]   location=AtOther, referencePoint = fitted global position,
     //                 D0 = raw loc0, Z0 = per-state chi2, omega = stereo tilt.
     //   MTC U/V partners are averaged into one state with omega = 0.
+    // On top of those, two states carry the FITTED MOMENTUM, which the AtOther
+    // states do not: location=AtFirstHit and location=AtLastHit, with
+    //   omega     = q/p [1/GeV] of the smoothed parameters (NOT a curvature:
+    //               same local convention as omega=stereo tilt above),
+    //   phi, tanLambda, referencePoint = direction and position there,
+    //   covMatrix(phi,phi), (omega,omega), (tanLambda,tanLambda) from the
+    //               smoothed covariance.
+    // q/p is what the KF measures in the MTC iron field, and SND-PFA's muon
+    // momentum comes from it; without these two states it was fitted and then
+    // dropped. Consumers that decode AtIP/AtOther (EDM4HEP2RNTuple, the event
+    // display) filter on `location` and are unaffected.
     auto writeTrack = [&](edm4hep::TrackCollection* out,
                           Acts::TrackIndexType idx, double chi2, int ndf,
                           double ddx, double ddy, int typeMask) {
@@ -3097,9 +3118,43 @@ StatusCode ACTSSequentialTracker::execute(const EventContext&) const {
         auto tipIdx = finalTrack.tipIndex();
         auto& mutableTraj = tracks.trackStateContainer();
         std::vector<edm4hep::TrackState> collected;
+        // Most upstream / most downstream smoothed state along the beam, for
+        // the AtFirstHit/AtLastHit momentum states written after the loop.
+        struct MomState {
+          bool  valid = false;
+          float beamZ = 0.f, ddX = 0.f, ddY = 0.f;
+          float phi = 0.f, tanLambda = 0.f, qOverP = 0.f;
+          float varPhi = 0.f, varQoP = 0.f, varTanL = 0.f;
+        };
+        MomState firstHit, lastHit;
         while (true) {
           auto ts = mutableTraj.getTrackState(tipIdx);
           if (ts.hasCalibrated()) {
+            // Point the Track at the TrackerHit3D this state was fitted to.
+            // Without it a written track carries only geometry, and nothing
+            // downstream can say which particle built it: MC-truth studies had
+            // to parse the [SegDump] log lines, and SND-PFA's muon corridor
+            // needs the same join at run time. The hit objects live in the
+            // input measurement collections, which job4 also writes out, so
+            // the relation resolves when the file is read back.
+            try {
+              const std::size_t mIdx =
+                  ts.getUncalibratedSourceLink().template get<SeqSourceLink>().index;
+              if (mIdx < measurements.size()) {
+                const auto& m = measurements[mIdx];
+                const edm4hep::TrackerHit3DCollection* srcColl =
+                    (m.detectorID == 0) ? stHits :
+                    (m.detectorID == 1) ? spHits : mtcHits;
+                if (srcColl && m.srcIndex >= 0 &&
+                    static_cast<std::size_t>(m.srcIndex) < srcColl->size()) {
+                  track.addToTrackerHits((*srcColl)[m.srcIndex]);
+                }
+              }
+            } catch (const std::exception&) {
+              // A state without a usable source link is not fatal here: the
+              // geometry of the track is still written.
+            }
+
             edm4hep::TrackState edm4ts;
             edm4ts.location = edm4hep::TrackState::AtOther;
             edm4ts.D0       = 0.0f;
@@ -3131,6 +3186,54 @@ StatusCode ACTSSequentialTracker::execute(const EventContext&) const {
             if (ts.hasSmoothed() || ts.hasFiltered()) {
               const Acts::BoundVector bv =
                   ts.hasSmoothed() ? ts.smoothed() : ts.filtered();
+              if (ts.hasSmoothed()) {
+                const double theta = bv[Acts::eBoundTheta];
+                const auto cov = ts.smoothedCovariance();
+                // var(tanLambda) from var(theta): tanLambda = cot(theta), so
+                // d(tanLambda)/d(theta) = -1/sin^2(theta).
+                const double s2 = std::sin(theta) * std::sin(theta);
+                const auto g = surf.localToGlobal(
+                    gctx, Acts::Vector2(bv[Acts::eBoundLoc0], bv[Acts::eBoundLoc1]),
+                    Acts::Vector3::UnitX());
+                MomState m;
+                m.valid  = true;
+                m.beamZ  = beamZ;
+                m.ddX    = static_cast<float>(g.z());
+                m.ddY    = static_cast<float>(g.y());
+                m.phi    = static_cast<float>(bv[Acts::eBoundPhi]);
+                m.tanLambda =
+                    static_cast<float>(std::tan(M_PI / 2.0 - theta));
+                // q/p in 1/GeV (ACTS native energy unit is already GeV; the
+                // factor documents the unit rather than changing the number).
+                //
+                // The SIGN is flipped on purpose. This tracking geometry maps
+                // DD4hep (x, y, z) onto ACTS (z, y, x) — beam along ACTS x —
+                // which is an odd permutation, i.e. a reflection. A magnetic
+                // field is a pseudovector, so the physical By = -1.9 T of the
+                // MTC iron corresponds to +1.9 T in this frame; the fit is
+                // given -1.9 T and is self-consistent with the equally
+                // reflected measurements (the calibrator's loc0 = -ddX), so
+                // the trajectory and |q/p| come out right and nothing about
+                // the fit needs changing — but the CHARGE it infers is the
+                // mirror image of the real one. Measured on the 2000-event
+                // GENIE sample before this flip: q/p was negative for 99 % of
+                // true mu+ and for only 13 % of true mu-. Flipping it here
+                // keeps the convention where a consumer expects it: q/p < 0
+                // means a negative particle.
+                m.qOverP = static_cast<float>(-bv[Acts::eBoundQOverP] *
+                                              Acts::UnitConstants::GeV);
+                m.varPhi = static_cast<float>(
+                    cov(Acts::eBoundPhi, Acts::eBoundPhi));
+                m.varQoP = static_cast<float>(
+                    cov(Acts::eBoundQOverP, Acts::eBoundQOverP) *
+                    Acts::UnitConstants::GeV * Acts::UnitConstants::GeV);
+                m.varTanL = (s2 > 1e-12)
+                    ? static_cast<float>(
+                          cov(Acts::eBoundTheta, Acts::eBoundTheta) / (s2 * s2))
+                    : 0.f;
+                if (!firstHit.valid || m.beamZ < firstHit.beamZ) firstHit = m;
+                if (!lastHit.valid  || m.beamZ > lastHit.beamZ)  lastHit  = m;
+              }
               edm4ts.phi = static_cast<float>(bv[Acts::eBoundPhi]);
               edm4ts.tanLambda = ts.hasSmoothed()
                   ? static_cast<float>(std::tan(M_PI / 2.0 - bv[Acts::eBoundTheta]))
@@ -3186,6 +3289,27 @@ StatusCode ACTSSequentialTracker::execute(const EventContext&) const {
           }
           if (!didPair) { track.addToTrackStates(collected[i]); ++i; }
         }
+
+        auto addMomState = [&track](const MomState& m, int location) {
+          if (!m.valid) return;
+          edm4hep::TrackState ms{};
+          ms.location  = location;
+          ms.D0        = 0.0f;
+          ms.Z0        = 0.0f;
+          ms.phi       = m.phi;
+          ms.tanLambda = m.tanLambda;
+          ms.omega     = m.qOverP;   // q/p [1/GeV], see the note above
+          ms.referencePoint = edm4hep::Vector3f{m.ddX, m.ddY, m.beamZ};
+          ms.setCovMatrix(m.varPhi,  edm4hep::TrackParams::phi,
+                          edm4hep::TrackParams::phi);
+          ms.setCovMatrix(m.varQoP,  edm4hep::TrackParams::omega,
+                          edm4hep::TrackParams::omega);
+          ms.setCovMatrix(m.varTanL, edm4hep::TrackParams::tanLambda,
+                          edm4hep::TrackParams::tanLambda);
+          track.addToTrackStates(ms);
+        };
+        addMomState(firstHit, edm4hep::TrackState::AtFirstHit);
+        addMomState(lastHit,  edm4hep::TrackState::AtLastHit);
       } catch (const std::exception& e) {
         warning() << "[ACTSSequentialTracker] evt=" << evtNum
                   << " trackStates iteration failed: " << e.what() << endmsg;

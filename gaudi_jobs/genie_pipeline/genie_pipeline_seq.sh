@@ -20,3 +20,9 @@ sleep 1
 k4run job4_tracking_seq.py
 sleep 1
 k4run job5_rntuple_seq.py
+sleep 1
+# SND-PFA: hits -> clusters -> muon -> PFOs, then the flat ShipPFA.root
+# (EventPFA / PFOs) that the MOBO's pfa_metrics reads.
+k4run job6_pfa.py
+sleep 1
+k4run job7_pfa_rntuple.py

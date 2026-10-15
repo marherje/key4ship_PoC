@@ -1,0 +1,74 @@
+# snd_genie_gen with the SND-PFA on top of the tracking (docs/snd_pfa_plan.md,
+# phase 5.2): identical except for `pfa_metrics: true`.
+#
+# How one SND variant is evaluated on GENIE interactions GENERATED ON THAT
+# VARIANT, instead of replayed from a shared HepMC (`snd_genie`).
+#
+# The chain grows a generation step in front of ddsim, all inside the trial's
+# job (mobo/ship/payload.py::generate):
+#
+#   geometry.xml --geoConverter--> geometry.gdml
+#                --shift_gdml_frame.py--> geometry_fairship.gdml
+#                --run_gevgen.sh (SHiP cvmfs, GENIE 3.4.2)--> genie/gntp.<id>.gst.root
+#                --genie_gst_to_hepmc.py--> genie.hepmc  --ddsim--> ...
+#
+# Why: GENIE samples the interaction vertices over the material it is given.
+# With a shared HepMC every variant is credited with the interactions of the
+# geometry the file was made on, which favours short, thin detectors (up to
+# ~19% at 20 SiTarget layers, see the snd_genie experiment's comments). Here
+# each variant gets exactly its own interactions, and the exposure GENIE
+# reports for them (`genie_pot`, POT for `nevents` interactions) turns into
+# the one number a shared file can never give: the interaction rate,
+# `n_int_per_1e18pot`, which scales with the variant's mass.
+#
+# Cost: ~10 min of gevgen_fnal per trial on top of ddsim (the 470 MB spline
+# file has to be parsed every time), and 6 GB of memory -- use
+# executor=htcondor_genie.
+nevents: 100                 # gevgen_fnal -n: interactions per trial
+# WARNING, not INFO: at INFO job4 alone writes ~1.4 KB per event (14 MB per
+# 10k-event trial). The metrics come from the RNTuples, never from the logs.
+output_level: WARNING
+python: python3
+
+run_sim: Optimization/Simulation/run_scripts/run_sim_genie.py
+sim_file: output_genie.edm4hep.root
+hits_file: ShipHits_seq.root
+jobs:
+  - job1_overlay
+  - job4_tracking_seq
+  - job5_rntuple_seq
+track_metrics: true
+# The SND-PFA after job5: job6_pfa (hits -> clusters -> muon -> PFOs) and
+# job7_pfa_rntuple (ShipPFA.root), read by mobo.ship.metrics.pfa_metrics.
+pfa_metrics: true
+
+# The generation step. Paths are relative to the repo root; the frame
+# numbers are the key4ship <-> FairShip offset (SiPad front at -37 cm here,
+# 2539 cm there) and DD4hep's world half-size (world_side in the compact),
+# outside which a GENIE air interaction would crash Geant4.
+genie:
+  run_gevgen: simulation/run_script/run_gevgen.sh
+  shift_gdml: simulation/geometry/gdml/shift_gdml_frame.py
+  convert: simulation/run_script/genie_gst_to_hepmc.py
+  dz_cm: 2576.0
+  z_shift_m: -25.76
+  world_half_size_m: 20.0
+
+cost_model:
+  si_per_m2: 30.0
+  w_per_kg: 0.1
+  rho_w_g_cm3: 19.3
+
+geometry_dir: null
+analysis_dir: null
+parse_geometry: null
+# Trials go under <run_dir>/trials unless this points elsewhere (e.g. EOS).
+trials_dir: null
+
+# Intermediate ROOT files. false (default): each Gaudi job's input is deleted
+# the moment the job is done with it (the ddsim output after job1, the overlay
+# after job4) and whatever is left goes once metrics.json is written -- a
+# 10k-event trial then never holds more than ~1.5 GB and ends at ~6 MB. true:
+# keep every file of every trial, e.g. to open one variant in the event
+# display:  mobo-run ... evaluator.keep_intermediate=true
+keep_intermediate: false
